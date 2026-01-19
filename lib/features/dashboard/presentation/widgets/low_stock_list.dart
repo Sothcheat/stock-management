@@ -41,7 +41,7 @@ class LowStockList extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             scrollDirection: Axis.horizontal,
             itemCount: dummyLowStock.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            separatorBuilder: (context, index) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
               final item = dummyLowStock[index];
               return Container(
