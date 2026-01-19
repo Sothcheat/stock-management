@@ -91,8 +91,9 @@ class OrdersRepository {
           } else {
             // If variants exist, user MUST select a variant.
             // If item.variantId is null but variants exist, that's an error in UI logic potentially.
-            if (item.variantId == null)
+            if (item.variantId == null) {
               throw Exception("Please select a variant for ${item.name}");
+            }
           }
         }
       }

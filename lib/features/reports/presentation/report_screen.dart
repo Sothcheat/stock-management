@@ -81,12 +81,15 @@ class _ReportContent extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [AppTheme.primary, AppTheme.primary.withOpacity(0.8)],
+                colors: [
+                  AppTheme.primary,
+                  AppTheme.primary.withValues(alpha: 0.8),
+                ],
               ),
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: AppTheme.primary.withOpacity(0.3),
+                  color: AppTheme.primary.withValues(alpha: 0.3),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),

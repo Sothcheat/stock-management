@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
-import '../../auth/domain/user_model.dart'; // Ensure UserRole enum is accessible
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -34,7 +33,7 @@ class ProfileScreen extends ConsumerWidget {
                 // Avatar
                 CircleAvatar(
                   radius: 50,
-                  backgroundColor: AppTheme.primary.withOpacity(0.1),
+                  backgroundColor: AppTheme.primary.withValues(alpha: 0.1),
                   child: Text(
                     user.displayName.isNotEmpty
                         ? user.displayName[0].toUpperCase()

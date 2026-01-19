@@ -165,9 +165,11 @@ class _OrderCard extends StatelessWidget {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
+                      color: statusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: statusColor.withOpacity(0.5)),
+                      border: Border.all(
+                        color: statusColor.withValues(alpha: 0.5),
+                      ),
                     ),
                     child: Text(
                       order.status.name.toUpperCase(),
