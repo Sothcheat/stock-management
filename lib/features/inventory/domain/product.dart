@@ -32,13 +32,23 @@ class Product {
   final double price;
   final double costPrice;
   final double? shipmentCost;
+  final double? discountValue;
+  final DiscountType discountType;
   final List<ProductVariant> variants;
   final int totalStock;
   final int lowStockThreshold;
   final String? imagePath;
   final DateTime createdAt;
 
-  // TODO: Add Discount (Map)
+  // Calculated Price
+  double get finalPrice {
+    if (discountValue == null || discountValue == 0) return price;
+    if (discountType == DiscountType.fixed) {
+      return (price - discountValue!).clamp(0, double.infinity);
+    } else {
+      return (price * (1 - discountValue! / 100)).clamp(0, double.infinity);
+    }
+  }
 
   const Product({
     required this.id,
@@ -48,6 +58,8 @@ class Product {
     required this.price,
     required this.costPrice,
     this.shipmentCost,
+    this.discountValue,
+    this.discountType = DiscountType.fixed,
     required this.variants,
     required this.totalStock,
     this.lowStockThreshold = 10,
@@ -78,6 +90,11 @@ class Product {
       price: (data['price'] ?? 0).toDouble(),
       costPrice: (data['costPrice'] ?? 0).toDouble(),
       shipmentCost: (data['shipmentCost'] ?? 0).toDouble(),
+      discountValue: (data['discountValue'] ?? 0).toDouble(),
+      discountType: DiscountType.values.firstWhere(
+        (e) => e.name == (data['discountType'] ?? 'fixed'),
+        orElse: () => DiscountType.fixed,
+      ),
       variants: (data['variants'] as List<dynamic>? ?? [])
           .map((v) => ProductVariant.fromMap(v))
           .toList(),
@@ -96,6 +113,8 @@ class Product {
       'price': price,
       'costPrice': costPrice,
       'shipmentCost': shipmentCost,
+      'discountValue': discountValue,
+      'discountType': discountType.name,
       'variants': variants.map((v) => v.toMap()).toList(),
       'totalStock': totalStock,
       'lowStockThreshold': lowStockThreshold,
@@ -112,6 +131,8 @@ class Product {
     double? price,
     double? costPrice,
     double? shipmentCost,
+    double? discountValue,
+    DiscountType? discountType,
     List<ProductVariant>? variants,
     int? totalStock,
     int? lowStockThreshold,
@@ -126,6 +147,8 @@ class Product {
       price: price ?? this.price,
       costPrice: costPrice ?? this.costPrice,
       shipmentCost: shipmentCost ?? this.shipmentCost,
+      discountValue: discountValue ?? this.discountValue,
+      discountType: discountType ?? this.discountType,
       variants: variants ?? this.variants,
       totalStock: totalStock ?? this.totalStock,
       lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
@@ -134,3 +157,5 @@ class Product {
     );
   }
 }
+
+enum DiscountType { percentage, fixed }

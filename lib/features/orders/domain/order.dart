@@ -18,12 +18,14 @@ class OrderCustomer {
   final String primaryPhone;
   final String? secondaryPhone;
   final String? telegramHandle;
+  final String? note; // Added note field
 
   const OrderCustomer({
     required this.name,
     required this.primaryPhone,
     this.secondaryPhone,
     this.telegramHandle,
+    this.note,
   });
 
   Map<String, dynamic> toMap() {
@@ -32,6 +34,7 @@ class OrderCustomer {
       'primaryPhone': primaryPhone,
       'secondaryPhone': secondaryPhone,
       'telegramHandle': telegramHandle,
+      'note': note,
     };
   }
 
@@ -41,6 +44,7 @@ class OrderCustomer {
       primaryPhone: map['primaryPhone'] ?? '',
       secondaryPhone: map['secondaryPhone'],
       telegramHandle: map['telegramHandle'],
+      note: map['note'],
     );
   }
 }
@@ -50,6 +54,7 @@ class OrderItem {
   final String? variantId;
   final String variantName;
   final double priceAtSale;
+  final double costPriceAtSale; // Added for profit calculation
   final int quantity;
   final String name;
 
@@ -58,6 +63,7 @@ class OrderItem {
     this.variantId,
     required this.variantName,
     required this.priceAtSale,
+    this.costPriceAtSale = 0.0,
     required this.quantity,
     required this.name,
   });
@@ -68,6 +74,7 @@ class OrderItem {
       'variantId': variantId,
       'variantName': variantName,
       'priceAtSale': priceAtSale,
+      'costPriceAtSale': costPriceAtSale,
       'quantity': quantity,
       'name': name,
     };
@@ -79,8 +86,22 @@ class OrderItem {
       variantId: map['variantId'],
       variantName: map['variantName'] ?? '',
       priceAtSale: (map['priceAtSale'] ?? 0).toDouble(),
+      costPriceAtSale: (map['costPriceAtSale'] ?? 0).toDouble(),
       quantity: (map['quantity'] ?? 0).toInt(),
       name: map['name'] ?? 'Product',
+    );
+  }
+
+  // Helper to create copy with cost price
+  OrderItem copyWith({double? costPriceAtSale}) {
+    return OrderItem(
+      productId: productId,
+      variantId: variantId,
+      variantName: variantName,
+      priceAtSale: priceAtSale,
+      costPriceAtSale: costPriceAtSale ?? this.costPriceAtSale,
+      quantity: quantity,
+      name: name,
     );
   }
 }

@@ -36,7 +36,9 @@ class OrdersRepository {
   Future<void> createOrder(OrderModel order) async {
     // Run as transaction to ensure stock consistency
     await _firestore.runTransaction((transaction) async {
-      // 1. Check stock for all items
+      List<OrderItem> itemsWithCost = [];
+
+      // 1. Check stock for all items AND capture cost price
       for (final item in order.items) {
         final productRef = _firestore
             .collection('products')
@@ -48,6 +50,9 @@ class OrdersRepository {
         }
 
         final product = Product.fromFirestore(productDoc);
+
+        // Capture cost price from the product at this moment
+        itemsWithCost.add(item.copyWith(costPriceAtSale: product.costPrice));
 
         // Variant Logic
         if (item.variantId != null) {
@@ -66,31 +71,12 @@ class OrdersRepository {
               "Insufficient stock for ${item.name} (${item.variantName})",
             );
           }
-
-          // Update variant stock in local object to prepare for write
-          // Note: arrays in Firestore are tricky to update partially inside nested objects without reading.
-          // Since we read the doc, we modify the list and write the whole variants array back (or partial).
-          // For simplicity/safety, we will write the Updated Product back.
-
-          // Logic:
-          // newVariants[i].stock -= qty
-          // totalStock -= qty
         } else {
-          // No variant, check total stock (assuming no variants logic, or main stock)
-          // Based on schema, if variants exist, totalStock is sum.
-          // If product has no variants, usage of variants list is empty.
-          // But wait, the schema says totalStock is sum of variants.
-          // If a product has NO variants, does it track totalStock directly?
-          // Let's assume for this project: Products ALWAYS have at least one variant?
-          // OR: If variants list is empty, we use totalStock directly.
-
           if (product.variants.isEmpty) {
             if (product.totalStock < item.quantity) {
               throw Exception("Insufficient stock for ${item.name}");
             }
           } else {
-            // If variants exist, user MUST select a variant.
-            // If item.variantId is null but variants exist, that's an error in UI logic potentially.
             if (item.variantId == null) {
               throw Exception("Please select a variant for ${item.name}");
             }
@@ -98,10 +84,7 @@ class OrdersRepository {
         }
       }
 
-      // 2. Deduct Stock (Second Pass or Combined)
-      // Since we need to write multiple updates, we iterate again or do it in one pass if we kept the refs.
-      // Refetch logic might be needed if we want to be super strict, but inside transaction we are safe from outside modifications on these docs.
-
+      // 2. Deduct Stock (Second Pass to ensure we don't start deducting if any check fails)
       for (final item in order.items) {
         final productRef = _firestore
             .collection('products')
@@ -134,16 +117,22 @@ class OrdersRepository {
         });
       }
 
-      // 3. Create Order
-      // We need to inject the ID into the model or let Firestore generate it and update model?
-      // Model passed in already has an ID? Usually we prefer Firestore to generate ID.
-      // Let's create a new ref with ID from passed model (if UUID) or generation.
-      // Since OrderModel in UI probably generates a UUID or empty.
-      // Cleanest: Let UI generate UUID for ID.
+      // 3. Create Order with updated items (containing cost price)
+      final orderToSave = OrderModel(
+        id: order.id,
+        customer: order.customer,
+        deliveryAddress: order.deliveryAddress,
+        items: itemsWithCost, // Use items with cost price
+        totalAmount: order.totalAmount,
+        status: order.status,
+        createdBy: order.createdBy,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+      );
 
       transaction.set(
         _firestore.collection('orders').doc(order.id),
-        order.toFirestore(),
+        orderToSave.toFirestore(),
       );
     });
   }

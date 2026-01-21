@@ -169,8 +169,8 @@ class ScaffoldWithNavBar extends StatelessWidget {
             label: 'Orders',
           ),
           NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart),
+            icon: Icon(Icons.insert_chart_outlined_outlined),
+            selectedIcon: Icon(Icons.insert_chart),
             label: 'Reports',
           ),
           NavigationDestination(

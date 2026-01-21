@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:uuid/uuid.dart';
 import '../domain/product.dart';
+import '../domain/category.dart';
 
 part 'inventory_repository.g.dart';
 
@@ -19,6 +20,11 @@ InventoryRepository inventoryRepository(Ref ref) {
 @riverpod
 Stream<List<Product>> productsStream(Ref ref) {
   return ref.watch(inventoryRepositoryProvider).processProductsStream();
+}
+
+@riverpod
+Stream<List<Category>> categoriesStream(Ref ref) {
+  return ref.watch(inventoryRepositoryProvider).getCategoriesStream();
 }
 
 class InventoryRepository {
@@ -73,5 +79,18 @@ class InventoryRepository {
 
   Future<void> deleteProduct(String productId) async {
     await _productsRef.doc(productId).delete();
+  }
+
+  // Categories
+  CollectionReference get _categoriesRef => _firestore.collection('categories');
+
+  Stream<List<Category>> getCategoriesStream() {
+    return _categoriesRef.orderBy('name').snapshots().map((snapshot) {
+      return snapshot.docs.map((doc) => Category.fromFirestore(doc)).toList();
+    });
+  }
+
+  Future<void> addCategory(String name) async {
+    await _categoriesRef.add({'name': name});
   }
 }

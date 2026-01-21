@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../design_system.dart';
 import '../../auth/data/auth_repository.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -12,114 +12,132 @@ class ProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final userProfileAsync = ref.watch(currentUserProfileProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Profile',
-          style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: AppTheme.primary,
-        foregroundColor: Colors.white,
-      ),
+    return SoftScaffold(
+      title: 'Profile',
+      showBack: false,
       body: userProfileAsync.when(
         data: (user) {
           if (user == null) {
-            return const Center(child: Text("User not found"));
+            return Center(
+              child: Text(
+                "User not found",
+                style: GoogleFonts.outfit(
+                  fontSize: 18,
+                  color: SoftColors.textSecondary,
+                ),
+              ),
+            );
           }
           return SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
                 // Avatar
-                CircleAvatar(
-                  radius: 50,
-                  backgroundColor: AppTheme.primary.withValues(alpha: 0.1),
-                  child: Text(
-                    user.displayName.isNotEmpty
-                        ? user.displayName[0].toUpperCase()
-                        : '?',
-                    style: GoogleFonts.outfit(
-                      fontSize: 40,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.primary,
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: SoftColors.brandPrimary.withValues(alpha: 0.2),
+                      width: 4,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: SoftColors.brandPrimary.withValues(alpha: 0.15),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Text(
+                      user.displayName.isNotEmpty
+                          ? user.displayName[0].toUpperCase()
+                          : '?',
+                      style: GoogleFonts.outfit(
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                        color: SoftColors.brandPrimary,
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 24),
 
                 // Name & Role
                 Text(
                   user.displayName,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  style: GoogleFonts.outfit(
+                    fontSize: 24,
                     fontWeight: FontWeight.bold,
+                    color: SoftColors.textMain,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
+                    horizontal: 16,
+                    vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(12),
+                    color: SoftColors.textSecondary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     user.role.name.toUpperCase(),
-                    style: const TextStyle(
+                    style: GoogleFonts.outfit(
                       fontWeight: FontWeight.bold,
-                      letterSpacing: 1,
+                      letterSpacing: 1.5,
+                      fontSize: 12,
+                      color: SoftColors.textSecondary,
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 40),
+                const SizedBox(height: 48),
 
                 // Info Section
-                _ProfileItem(
-                  title: "Email",
-                  value: user.email,
-                  icon: Icons.email_outlined,
-                ),
-                const Divider(),
-                _ProfileItem(
-                  title: "User ID",
-                  value: user.uid,
-                  icon: Icons.badge_outlined,
+                SoftCard(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      _ProfileItem(
+                        title: "Email",
+                        value: user.email,
+                        icon: Icons.email_outlined,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Divider(
+                          color: SoftColors.textSecondary.withValues(
+                            alpha: 0.1,
+                          ),
+                          height: 1,
+                        ),
+                      ),
+                      _ProfileItem(
+                        title: "User ID",
+                        value: user.uid,
+                        icon: Icons.badge_outlined,
+                      ),
+                    ],
+                  ),
                 ),
 
-                const SizedBox(height: 40),
-
-                // Settings Section (Theme - Stub)
-                // Row(
-                //   children: [
-                //     const Icon(Icons.dark_mode_outlined, color: Colors.grey),
-                //     const SizedBox(width: 16),
-                //     const Text("Dark Mode", style: TextStyle(fontSize: 16)),
-                //     const Spacer(),
-                //     Switch(value: false, onChanged: (v){}),
-                //   ],
-                // ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 48),
 
                 // Logout Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      await ref.read(authRepositoryProvider).signOut();
-                      // Router should handle redirect via authStateChanges
-                    },
-                    icon: const Icon(Icons.logout, color: Colors.red),
-                    label: const Text(
-                      "Sign Out",
-                      style: TextStyle(color: Colors.red),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red),
-                    ),
-                  ),
+                SoftButton(
+                  label: "Sign Out",
+                  icon: Icons.logout_rounded,
+                  backgroundColor: SoftColors.error.withValues(alpha: 0.1),
+                  textColor: SoftColors.error,
+                  onTap: () async {
+                    await ref.read(authRepositoryProvider).signOut();
+                    // Router should handle redirect via authStateChanges
+                  },
                 ),
               ],
             ),
@@ -145,30 +163,41 @@ class _ProfileItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.grey, size: 24),
-          const SizedBox(width: 16),
-          Column(
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: SoftColors.bgLight,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: SoftColors.textSecondary, size: 24),
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                style: GoogleFonts.outfit(
+                  fontSize: 12,
+                  color: SoftColors.textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               Text(
                 value,
-                style: const TextStyle(
+                style: GoogleFonts.outfit(
                   fontSize: 16,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
+                  color: SoftColors.textMain,
                 ),
               ),
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

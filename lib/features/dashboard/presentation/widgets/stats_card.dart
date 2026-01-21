@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../../design_system.dart';
 
 class StatsCard extends StatelessWidget {
   final String title;
@@ -17,25 +18,8 @@ class StatsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Container(
+    return SoftCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.shadow.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -43,36 +27,37 @@ class StatsCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: colorScheme.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(icon, color: colorScheme.primary, size: 20),
+                child: Icon(icon, color: SoftColors.brandPrimary, size: 20),
               ),
-              // Trend indicator
               if (isPositive)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
+                    horizontal: 8,
+                    vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
+                    color: SoftColors.success.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   child: Row(
                     children: [
                       const Icon(
-                        Icons.arrow_upward,
-                        size: 12,
-                        color: Colors.green,
+                        Icons.trending_up,
+                        size: 14,
+                        color: SoftColors.success,
                       ),
                       const SizedBox(width: 4),
                       Text(
                         "12%",
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: Colors.green,
+                        style: GoogleFonts.outfit(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: SoftColors.success,
                         ),
                       ),
                     ],
@@ -84,16 +69,17 @@ class StatsCard extends StatelessWidget {
           Text(
             value,
             style: GoogleFonts.outfit(
-              fontSize: 24,
+              fontSize: 26,
               fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
+              color: SoftColors.textMain,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             title,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
+            style: GoogleFonts.outfit(
+              fontSize: 14,
+              color: SoftColors.textSecondary,
             ),
           ),
         ],
