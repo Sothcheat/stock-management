@@ -139,6 +139,9 @@ class _ProductCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isOutOfStock = product.totalStock <= 0;
+    final isLowStock = !isOutOfStock && product.totalStock < 10;
+
     return BounceButton(
       onTap: () {
         context.go('/inventory/detail', extra: product);
@@ -150,35 +153,42 @@ class _ProductCard extends ConsumerWidget {
           children: [
             // Image Area
             Expanded(
-              child: Container(
-                width: double.infinity,
-                color: SoftColors.textSecondary.withValues(alpha: 0.05),
-                child: product.imagePath != null
-                    ? CachedNetworkImage(
-                        imageUrl: product.imagePath!,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          color: SoftColors.bgLight,
-                          child: const Icon(
-                            Icons.image,
-                            color: SoftColors.textSecondary,
-                          ),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          color: SoftColors.bgLight,
-                          child: Icon(
-                            Icons.broken_image_rounded,
-                            color: SoftColors.textSecondary.withValues(
-                              alpha: 0.5,
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(SoftColors.cardRadius),
+                ),
+                child: Container(
+                  width: double.infinity,
+                  color: SoftColors.textSecondary.withValues(alpha: 0.05),
+                  child: product.imagePath != null
+                      ? CachedNetworkImage(
+                          imageUrl: product.imagePath!,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            color: SoftColors.bgLight,
+                            child: const Icon(
+                              Icons.image,
+                              color: SoftColors.textSecondary,
                             ),
                           ),
+                          errorWidget: (context, url, error) => Container(
+                            color: SoftColors.bgLight,
+                            child: Icon(
+                              Icons.broken_image_rounded,
+                              color: SoftColors.textSecondary.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.image_not_supported_rounded,
+                          color: SoftColors.textSecondary.withValues(
+                            alpha: 0.3,
+                          ),
+                          size: 40,
                         ),
-                      )
-                    : Icon(
-                        Icons.image_not_supported_rounded,
-                        color: SoftColors.textSecondary.withValues(alpha: 0.3),
-                        size: 40,
-                      ),
+                ),
               ),
             ),
             // Details Area
@@ -187,6 +197,7 @@ class _ProductCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Product Name
                   Text(
                     product.name,
                     maxLines: 2,
@@ -198,58 +209,69 @@ class _ProductCard extends ConsumerWidget {
                       height: 1.2,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
+
+                  // Price & Stock Row
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment:
+                        CrossAxisAlignment.center, // Better alignment
                     children: [
-                      // Price (Dominant)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (product.finalPrice < product.price)
-                            Text(
-                              '\$${product.price.toStringAsFixed(2)}',
-                              style: GoogleFonts.outfit(
-                                fontWeight: FontWeight.normal,
-                                color: SoftColors.textSecondary,
-                                fontSize: 10, // Smaller strikethrough
-                                decoration: TextDecoration.lineThrough,
-                              ),
-                            ),
-                          Text(
-                            '\$${product.finalPrice.toStringAsFixed(2)}',
-                            style: GoogleFonts.outfit(
-                              fontWeight: FontWeight.w700, // SemiBold -> Bold
-                              color: SoftColors.brandPrimary,
-                              fontSize: 18,
-                            ),
+                      // Price
+                      Flexible(
+                        child: Text(
+                          '\$${product.price.toStringAsFixed(2)}',
+                          style: GoogleFonts.outfit(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: SoftColors.brandPrimary,
+                            height: 1.0,
                           ),
-                        ],
+                        ),
                       ),
-                      const Spacer(),
-                      // Stock Badge (Secondary)
+                      const SizedBox(width: 8),
+                      // Stock Badge
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: product.totalStock <= product.lowStockThreshold
+                          color: isOutOfStock
                               ? SoftColors.error.withValues(alpha: 0.1)
-                              : SoftColors.textSecondary.withValues(alpha: 0.1),
+                              : (isLowStock
+                                    ? SoftColors.warning.withValues(alpha: 0.1)
+                                    : SoftColors.success.withValues(
+                                        alpha: 0.1,
+                                      )),
                           borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isOutOfStock
+                                ? SoftColors.error.withValues(alpha: 0.2)
+                                : (isLowStock
+                                      ? SoftColors.warning.withValues(
+                                          alpha: 0.2,
+                                        )
+                                      : SoftColors.success.withValues(
+                                          alpha: 0.2,
+                                        )),
+                            width: 1,
+                          ),
                         ),
                         child: Text(
-                          product.totalStock <= product.lowStockThreshold
-                              ? 'Low: ${product.totalStock}'
-                              : 'Stock: ${product.totalStock}',
+                          isOutOfStock
+                              ? 'No Stock'
+                              : (isLowStock
+                                    ? 'Low: ${product.totalStock}'
+                                    : 'Stock: ${product.totalStock}'),
                           style: GoogleFonts.outfit(
-                            color:
-                                product.totalStock <= product.lowStockThreshold
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isOutOfStock
                                 ? SoftColors.error
-                                : SoftColors.textMain,
-                            fontSize: 12, // Increased from 10
-                            fontWeight: FontWeight.w600,
+                                : (isLowStock
+                                      ? SoftColors.warning
+                                      : SoftColors.success),
                           ),
                         ),
                       ),

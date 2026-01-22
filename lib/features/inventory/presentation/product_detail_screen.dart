@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
 import '../../inventory/domain/product.dart';
 import '../../inventory/data/inventory_repository.dart';
+import '../../products/data/providers/product_provider.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
   final Product product;
@@ -14,12 +15,22 @@ class ProductDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final productsAsync = ref.watch(productsProvider);
+
+    // Find the latest version of this product from the provider, or use the passed one
+    final currentProduct =
+        productsAsync.value?.firstWhere(
+          (p) => p.id == product.id,
+          orElse: () => product,
+        ) ??
+        product;
+
     return SoftScaffold(
       title: 'Product Details',
       showBack: true,
       actions: [
         BounceButton(
-          onTap: () => context.go('/inventory/edit', extra: product),
+          onTap: () => context.go('/inventory/edit', extra: currentProduct),
           child: Container(
             padding: const EdgeInsets.all(
               12,
@@ -51,13 +62,13 @@ class ProductDetailScreen extends ConsumerWidget {
                   color: SoftColors.textMain.withValues(alpha: 0.05),
                   borderRadius: BorderRadius.circular(SoftColors.cardRadius),
                 ),
-                child: product.imagePath != null
+                child: currentProduct.imagePath != null
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(
                           SoftColors.cardRadius,
                         ),
                         child: CachedNetworkImage(
-                          imageUrl: product.imagePath!,
+                          imageUrl: currentProduct.imagePath!,
                           fit: BoxFit.cover,
                           placeholder: (context, url) => Center(
                             child: CircularProgressIndicator(
@@ -89,7 +100,7 @@ class ProductDetailScreen extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    product.name,
+                    currentProduct.name,
                     style: GoogleFonts.outfit(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -98,7 +109,7 @@ class ProductDetailScreen extends ConsumerWidget {
                   ),
                 ),
                 Text(
-                  '\$${product.price.toStringAsFixed(2)}',
+                  '\$${currentProduct.price.toStringAsFixed(2)}',
                   style: GoogleFonts.outfit(
                     fontSize: 24,
                     color: SoftColors.brandPrimary,
@@ -112,15 +123,25 @@ class ProductDetailScreen extends ConsumerWidget {
             // Info Grid
             SoftCard(
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _DetailItem("Cost Price", "\$${product.costPrice}"),
+                  Expanded(
+                    child: _DetailItem(
+                      "Cost Price",
+                      "\$${currentProduct.costPrice}",
+                    ),
+                  ),
                   _ContainerLine(),
-                  _DetailItem("Stock", "${product.totalStock}"),
+                  Expanded(
+                    child: _DetailItem("Stock", "${currentProduct.totalStock}"),
+                  ),
                   _ContainerLine(),
-                  _DetailItem(
-                    "Category",
-                    product.categoryId.isEmpty ? "N/A" : product.categoryId,
+                  Expanded(
+                    child: _DetailItem(
+                      "Category",
+                      currentProduct.categoryId.isEmpty
+                          ? "N/A"
+                          : currentProduct.categoryId,
+                    ),
                   ),
                 ],
               ),
@@ -138,9 +159,9 @@ class ProductDetailScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              product.description.isEmpty
+              currentProduct.description.isEmpty
                   ? "No description available."
-                  : product.description,
+                  : currentProduct.description,
               style: GoogleFonts.outfit(
                 fontSize: 16,
                 color: SoftColors.textSecondary,
@@ -150,7 +171,7 @@ class ProductDetailScreen extends ConsumerWidget {
             const SizedBox(height: 32),
 
             // Variants
-            if (product.variants.isNotEmpty) ...[
+            if (currentProduct.variants.isNotEmpty) ...[
               Text(
                 "Variants",
                 style: GoogleFonts.outfit(
@@ -160,7 +181,7 @@ class ProductDetailScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              ...product.variants.map(
+              ...currentProduct.variants.map(
                 (v) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: SoftCard(
@@ -205,6 +226,18 @@ class ProductDetailScreen extends ConsumerWidget {
                 ),
               ),
             ],
+
+            // Stock Adjustment Section
+            Text(
+              "Manage Stock",
+              style: GoogleFonts.outfit(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: SoftColors.textMain,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _StockAdjustmentCard(product: currentProduct),
 
             const SizedBox(height: 48),
 
@@ -257,7 +290,7 @@ class ProductDetailScreen extends ConsumerWidget {
                   // TODO: Use abstract repository once delete is supported
                   await ref
                       .read(inventoryRepositoryProvider)
-                      .deleteProduct(product.id);
+                      .deleteProduct(currentProduct.id);
                   if (context.mounted) context.pop();
                 }
               },
@@ -294,7 +327,7 @@ class _DetailItem extends StatelessWidget {
           label,
           style: GoogleFonts.outfit(
             color: SoftColors.textSecondary,
-            fontSize: 12,
+            fontSize: 14, // Increased from 12
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -303,11 +336,213 @@ class _DetailItem extends StatelessWidget {
           value,
           style: GoogleFonts.outfit(
             color: SoftColors.textMain,
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
+            fontWeight: FontWeight.w800, // Increased weight
+            fontSize: 18, // Increased from 16
           ),
         ),
       ],
+    );
+  }
+}
+
+class _StockAdjustmentCard extends ConsumerStatefulWidget {
+  final Product product;
+  const _StockAdjustmentCard({required this.product});
+
+  @override
+  ConsumerState<_StockAdjustmentCard> createState() =>
+      _StockAdjustmentCardState();
+}
+
+class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
+  bool _isUpdating = false;
+
+  Future<void> _updateStock(int delta) async {
+    if (_isUpdating) return;
+    setState(() => _isUpdating = true);
+
+    try {
+      // Calculate new stock
+      final currentStock = widget.product.totalStock;
+      final newStock = currentStock + delta; // delta can be negative
+
+      if (newStock < 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "Cannot reduce stock below 0",
+                style: GoogleFonts.outfit(color: Colors.white),
+              ),
+              backgroundColor: SoftColors.error,
+            ),
+          );
+        }
+        return;
+      }
+
+      final updatedProduct = widget.product.copyWith(totalStock: newStock);
+
+      // Use the notifier to update
+      await ref.read(productsProvider.notifier).updateProduct(updatedProduct);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              delta > 0
+                  ? "Stock increased by $delta"
+                  : "Stock reduced by ${delta.abs()}",
+              style: GoogleFonts.outfit(color: Colors.white),
+            ),
+            backgroundColor: SoftColors.success,
+            duration: const Duration(milliseconds: 1000),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Failed to update stock: $e"),
+            backgroundColor: SoftColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
+  void _showCustomReduceDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: SoftColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(SoftColors.cardRadius),
+        ),
+        title: Text(
+          "Reduce Stock",
+          style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              "Current Stock: ${widget.product.totalStock}",
+              style: GoogleFonts.outfit(color: SoftColors.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            ModernInput(
+              controller: controller,
+              hintText: "Enter amount (e.g. 10)",
+              keyboardType: TextInputType.number,
+              prefixIcon: Icons.remove_circle_outline,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              final val = int.tryParse(controller.text);
+              if (val != null && val > 0) {
+                Navigator.pop(context);
+                _updateStock(-val);
+              }
+            },
+            child: Text(
+              "Reduce",
+              style: GoogleFonts.outfit(
+                fontWeight: FontWeight.bold,
+                color: SoftColors.error,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SoftCard(
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: SoftColors.warning.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.inventory_2_rounded,
+                  color: SoftColors.warning,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Quick Actions",
+                    style: GoogleFonts.outfit(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: SoftColors.textMain,
+                    ),
+                  ),
+                  Text(
+                    "Adjust inventory levels",
+                    style: GoogleFonts.outfit(
+                      color: SoftColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              // Quick Reduce 1
+              Expanded(
+                child: SoftButton(
+                  label: "Reduce 1",
+                  onTap: () => _updateStock(-1),
+                  isLoading: _isUpdating,
+                  backgroundColor: SoftColors.brandPrimary.withValues(
+                    alpha: 0.1,
+                  ),
+                  textColor: SoftColors.brandPrimary,
+                  icon: Icons.remove_circle_outline_rounded,
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Custom Reduce
+              Expanded(
+                child: SoftButton(
+                  label: "Custom",
+                  onTap: _showCustomReduceDialog,
+                  isLoading: _isUpdating, // Also disable this if updating
+                  backgroundColor: SoftColors.background,
+                  textColor: SoftColors.textMain,
+                  icon: Icons.edit_note_rounded,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

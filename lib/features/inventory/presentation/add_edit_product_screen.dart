@@ -42,6 +42,9 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
   String? _currentImageUrl;
   bool _isLoading = false;
 
+  // Logic to persist initial category if not fully public
+  String? _initialCategoryId;
+
   // Variants
   List<ProductVariant> _variants = [];
 
@@ -61,6 +64,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
     );
     _stockController = TextEditingController(text: p?.totalStock.toString());
     _categoryController = TextEditingController(text: p?.categoryId);
+    _initialCategoryId = p?.categoryId;
 
     // Discount Init
     _discountController = TextEditingController(
@@ -359,22 +363,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                     controller: _nameController,
                     hintText: 'Enter product name',
                     labelText: 'Product Name',
-                    suffixIcon: ValueListenableBuilder(
-                      valueListenable: _nameController,
-                      builder: (context, value, child) {
-                        return value.text.isEmpty
-                            ? const SizedBox.shrink()
-                            : IconButton(
-                                icon: const Icon(
-                                  Icons.clear,
-                                  color: SoftColors.textSecondary,
-                                ),
-                                onPressed: () {
-                                  _nameController.clear();
-                                },
-                              );
-                      },
-                    ),
+                    showClearButton: true,
                     validator: (v) => v?.isEmpty == true ? 'Required' : null,
                   ),
                   const SizedBox(height: 16),
@@ -382,22 +371,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                     controller: _descController,
                     hintText: 'Enter product description',
                     labelText: 'Description (Optional)',
-                    suffixIcon: ValueListenableBuilder(
-                      valueListenable: _descController,
-                      builder: (context, value, child) {
-                        return value.text.isEmpty
-                            ? const SizedBox.shrink()
-                            : IconButton(
-                                icon: const Icon(
-                                  Icons.clear,
-                                  color: SoftColors.textSecondary,
-                                ),
-                                onPressed: () {
-                                  _descController.clear();
-                                },
-                              );
-                      },
-                    ),
+                    showClearButton: true,
                     maxLines: 2,
                   ),
                   const SizedBox(height: 16),
@@ -425,12 +399,11 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                               valueListenable: _categoryController,
                               builder: (context, controllerValue, _) {
                                 final currentText = controllerValue.text;
-                                final bool isValid =
-                                    currentText.isEmpty ||
-                                    categories.any(
-                                      (c) => c.name == currentText,
-                                    );
-                                final effectiveValue = isValid
+                                final bool isInList = categories.any(
+                                  (c) => c.name == currentText,
+                                );
+                                // Ensure value is not null if text exists, so it shows in dropdown (even if not in list)
+                                final effectiveValue = currentText.isNotEmpty
                                     ? currentText
                                     : null;
                                 return DropdownButtonFormField<String>(
@@ -474,6 +447,39 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                         ),
                                       ),
                                     ),
+                                    // 1. Initial Category (Legacy) - Always keep available so user can revert
+                                    if (_initialCategoryId != null &&
+                                        _initialCategoryId!.isNotEmpty &&
+                                        !categories.any(
+                                          (c) => c.name == _initialCategoryId,
+                                        ) &&
+                                        _initialCategoryId != '__new__')
+                                      DropdownMenuItem(
+                                        value: _initialCategoryId,
+                                        child: Text(
+                                          "$_initialCategoryId (Legacy)",
+                                          style: GoogleFonts.outfit(
+                                            color: SoftColors.textSecondary,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                      ),
+
+                                    // 2. Current Custom Value (if different from initial)
+                                    if (effectiveValue != null &&
+                                        !isInList &&
+                                        effectiveValue != '__new__' &&
+                                        effectiveValue != _initialCategoryId)
+                                      DropdownMenuItem(
+                                        value: effectiveValue,
+                                        child: Text(
+                                          effectiveValue,
+                                          style: GoogleFonts.outfit(
+                                            color: SoftColors.textMain,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                      ),
                                     ...categories.map(
                                       (c) => DropdownMenuItem(
                                         value: c.name,
@@ -591,22 +597,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                           hintText: 'Selling Price',
                           labelText: 'Selling Price',
                           prefixText: '\$ ',
-                          suffixIcon: ValueListenableBuilder(
-                            valueListenable: _priceController,
-                            builder: (context, value, child) {
-                              return value.text.isEmpty
-                                  ? const SizedBox.shrink()
-                                  : IconButton(
-                                      icon: const Icon(
-                                        Icons.clear,
-                                        color: SoftColors.textSecondary,
-                                      ),
-                                      onPressed: () {
-                                        _priceController.clear();
-                                      },
-                                    );
-                            },
-                          ),
+                          showClearButton: true,
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
@@ -626,22 +617,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                           hintText: 'Cost Price',
                           labelText: 'Cost Price',
                           prefixText: '\$ ',
-                          suffixIcon: ValueListenableBuilder(
-                            valueListenable: _costPriceController,
-                            builder: (context, value, child) {
-                              return value.text.isEmpty
-                                  ? const SizedBox.shrink()
-                                  : IconButton(
-                                      icon: const Icon(
-                                        Icons.clear,
-                                        color: SoftColors.textSecondary,
-                                      ),
-                                      onPressed: () {
-                                        _costPriceController.clear();
-                                      },
-                                    );
-                            },
-                          ),
+                          showClearButton: true,
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
@@ -662,23 +638,8 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                     hintText: 'Shipment Cost (Optional)',
                     labelText: 'Shipment Cost',
                     prefixText: '\$ ',
-                    suffixIcon: ValueListenableBuilder(
-                      valueListenable: _shipmentCostController,
-                      builder: (context, value, child) {
-                        return value.text.isEmpty
-                            ? const SizedBox.shrink()
-                            : IconButton(
-                                icon: const Icon(
-                                  Icons.clear,
-                                  color: SoftColors.textSecondary,
-                                ),
-                                onPressed: () {
-                                  _shipmentCostController.clear();
-                                },
-                              );
-                      },
-                    ),
-                    keyboardType: TextInputType.numberWithOptions(
+                    showClearButton: true,
+                    keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     inputFormatters: [
@@ -761,25 +722,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                         prefixText: type == DiscountType.fixed
                                             ? '\$ '
                                             : '% ',
-                                        suffixText: '',
-                                        suffixIcon: ValueListenableBuilder(
-                                          valueListenable: _discountController,
-                                          builder: (context, value, child) {
-                                            return value.text.isEmpty
-                                                ? const SizedBox.shrink()
-                                                : IconButton(
-                                                    icon: const Icon(
-                                                      Icons.clear,
-                                                      color: SoftColors
-                                                          .textSecondary,
-                                                    ),
-                                                    onPressed: () {
-                                                      _discountController
-                                                          .clear();
-                                                    },
-                                                  );
-                                          },
-                                        ),
+                                        showClearButton: true,
                                         keyboardType:
                                             const TextInputType.numberWithOptions(
                                               decimal: true,
@@ -895,20 +838,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                     controller: _stockController,
                     hintText: 'Enter total stock',
                     labelText: 'Total Stock',
-                    suffixIcon: ValueListenableBuilder(
-                      valueListenable: _stockController,
-                      builder: (context, value, child) {
-                        return value.text.isEmpty
-                            ? SizedBox.shrink()
-                            : IconButton(
-                                onPressed: () => _stockController.clear(),
-                                icon: Icon(
-                                  Icons.clear,
-                                  color: SoftColors.textSecondary,
-                                ),
-                              );
-                      },
-                    ),
+                    showClearButton: true,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   ),

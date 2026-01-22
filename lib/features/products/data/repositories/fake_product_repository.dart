@@ -46,4 +46,12 @@ class FakeProductRepository implements ProductRepository {
     }
     return null;
   }
+
+  @override
+  Future<void> updateProduct(Product product) async {
+    // Simulate network lag
+    await Future.delayed(const Duration(milliseconds: 500));
+    // In a real implementation or a stateful fake, we would update the list here.
+    // For this stateless generator, we just return success.
+  }
 }

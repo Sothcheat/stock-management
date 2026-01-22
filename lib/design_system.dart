@@ -194,6 +194,7 @@ class ModernInput extends StatefulWidget {
   final bool readOnly;
   final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
+  final bool showClearButton;
 
   const ModernInput({
     super.key,
@@ -213,6 +214,7 @@ class ModernInput extends StatefulWidget {
     this.readOnly = false,
     this.inputFormatters,
     this.onChanged,
+    this.showClearButton = false,
   });
 
   @override
@@ -324,7 +326,28 @@ class _ModernInputState extends State<ModernInput> {
             fontSize: 16,
             fontWeight: FontWeight.bold,
           ),
-          suffixIcon: widget.suffixIcon,
+          suffixIcon: widget.showClearButton && widget.controller != null
+              ? ValueListenableBuilder<bool>(
+                  valueListenable: _isFocused,
+                  builder: (context, hasFocus, child) {
+                    if (!hasFocus) return const SizedBox.shrink();
+                    return ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: widget.controller!,
+                      builder: (context, value, child) {
+                        if (value.text.isEmpty) return const SizedBox.shrink();
+                        return IconButton(
+                          icon: const Icon(
+                            Icons.cancel, // Use cancel or clear
+                            color: SoftColors.textSecondary,
+                            size: 20,
+                          ),
+                          onPressed: () => widget.controller!.clear(),
+                        );
+                      },
+                    );
+                  },
+                )
+              : widget.suffixIcon,
           suffixText: widget.suffixText,
           suffixStyle: GoogleFonts.outfit(
             color: SoftColors.textMain,

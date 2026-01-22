@@ -12,6 +12,29 @@ ProductRepository productRepository(Ref ref) {
 }
 
 @riverpod
-Future<List<Product>> products(Ref ref) {
-  return ref.watch(productRepositoryProvider).fetchProducts();
+class Products extends _$Products {
+  @override
+  Future<List<Product>> build() {
+    return ref.watch(productRepositoryProvider).fetchProducts();
+  }
+
+  Future<void> updateProduct(Product updatedProduct) async {
+    final previousState = state;
+    // Optimistic update
+    if (previousState.hasValue) {
+      state = AsyncData(
+        previousState.value!
+            .map((p) => p.id == updatedProduct.id ? updatedProduct : p)
+            .toList(),
+      );
+    }
+
+    try {
+      await ref.read(productRepositoryProvider).updateProduct(updatedProduct);
+    } catch (e) {
+      // Revert on failure
+      state = previousState;
+      rethrow;
+    }
+  }
 }
