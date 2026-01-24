@@ -16,7 +16,7 @@ enum UserRole {
 class UserModel {
   final String uid;
   final String email;
-  final String displayName;
+  final String name; // Changed from displayName
   final UserRole role;
   final String? fcmToken;
   final DateTime createdAt;
@@ -24,28 +24,30 @@ class UserModel {
   const UserModel({
     required this.uid,
     required this.email,
-    required this.displayName,
+    required this.name,
     required this.role,
     this.fcmToken,
     required this.createdAt,
   });
 
-  factory UserModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+  factory UserModel.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    final data = snapshot.data();
     return UserModel(
-      uid: doc.id,
-      email: data['email'] ?? '',
-      displayName: data['displayName'] ?? '',
-      role: UserRole.fromString(data['role'] ?? 'employee'),
-      fcmToken: data['fcmToken'],
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
+      uid: snapshot.id,
+      email: data?['email'] ?? '',
+      name: data?['name'] ?? 'User', // Mapped from 'name' field
+      role: UserRole.fromString(data?['role'] ?? 'employee'),
+      fcmToken: data?['fcmToken'],
+      createdAt: (data?['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'email': email,
-      'displayName': displayName,
+      'name': name,
       'role': role.name,
       'fcmToken': fcmToken,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -55,7 +57,7 @@ class UserModel {
   UserModel copyWith({
     String? uid,
     String? email,
-    String? displayName,
+    String? name,
     UserRole? role,
     String? fcmToken,
     DateTime? createdAt,
@@ -63,7 +65,7 @@ class UserModel {
     return UserModel(
       uid: uid ?? this.uid,
       email: email ?? this.email,
-      displayName: displayName ?? this.displayName,
+      name: name ?? this.name,
       role: role ?? this.role,
       fcmToken: fcmToken ?? this.fcmToken,
       createdAt: createdAt ?? this.createdAt,

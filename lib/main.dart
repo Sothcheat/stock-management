@@ -12,9 +12,11 @@ void main() async {
 
   try {
     // If you haven't run flutterfire configure, this will throw
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
   } catch (e) {
     debugPrint("Firebase init error: $e");
     // Fallback? Or just let it crash/log if essential

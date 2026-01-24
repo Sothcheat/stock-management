@@ -1,16 +1,16 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'orders_repository.dart';
+part of 'firebase_orders_repository.dart';
 
 // **************************************************************************
 // RiverpodGenerator
 // **************************************************************************
 
-String _$ordersRepositoryHash() => r'45fb01b5096c0c2f4c21a4355fa477e493377f35';
+String _$ordersRepositoryHash() => r'a6631388736324921904e6b50943afef8f0a8601';
 
 /// See also [ordersRepository].
 @ProviderFor(ordersRepository)
-final ordersRepositoryProvider = Provider<OrdersRepository>.internal(
+final ordersRepositoryProvider = Provider<OrderRepository>.internal(
   ordersRepository,
   name: r'ordersRepositoryProvider',
   debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
@@ -22,7 +22,7 @@ final ordersRepositoryProvider = Provider<OrdersRepository>.internal(
 
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
-typedef OrdersRepositoryRef = ProviderRef<OrdersRepository>;
+typedef OrdersRepositoryRef = ProviderRef<OrderRepository>;
 String _$ordersStreamHash() => r'28750627e24ae8a0549fe1df7d87ca0bfe7b5d2c';
 
 /// See also [ordersStream].

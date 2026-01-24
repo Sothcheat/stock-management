@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
-import '../../orders/data/orders_repository.dart';
+import '../../orders/data/firebase_orders_repository.dart';
 import '../../orders/domain/order.dart';
+import '../../auth/data/providers/auth_providers.dart';
+import '../../auth/domain/user_model.dart';
 
 class OrderDetailScreen extends ConsumerWidget {
   final OrderModel order;
@@ -13,6 +15,15 @@ class OrderDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ordersAsync = ref.watch(ordersStreamProvider);
+    final userProfileAsync = ref.watch(currentUserProfileProvider);
+
+    // Security: Wait for user profile to load to prevent showing Owner data to Employees
+    if (userProfileAsync.isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final user = userProfileAsync.value;
+    final isEmployee = user?.role == UserRole.employee;
 
     return ordersAsync.when(
       loading: () =>
@@ -37,66 +48,68 @@ class OrderDetailScreen extends ConsumerWidget {
           title: "Order Details",
           showBack: true,
           actions: [
-            BounceButton(
-              onTap: () async {
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder: (c) => AlertDialog(
-                    backgroundColor: SoftColors.surface,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        SoftColors.cardRadius,
-                      ),
-                    ),
-                    title: Text(
-                      "Delete Order?",
-                      style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-                    ),
-                    content: Text(
-                      "This action cannot be undone. Stock will be restored.",
-                      style: GoogleFonts.outfit(
-                        color: SoftColors.textSecondary,
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(c, false),
-                        child: const Text("Cancel"),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(c, true),
-                        child: Text(
-                          "Delete",
-                          style: GoogleFonts.outfit(
-                            color: SoftColors.error,
-                            fontWeight: FontWeight.bold,
-                          ),
+            if (!isEmployee) ...[
+              BounceButton(
+                onTap: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (c) => AlertDialog(
+                      backgroundColor: SoftColors.surface,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          SoftColors.cardRadius,
                         ),
                       ),
-                    ],
+                      title: Text(
+                        "Delete Order?",
+                        style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                      ),
+                      content: Text(
+                        "This action cannot be undone. Stock will be restored.",
+                        style: GoogleFonts.outfit(
+                          color: SoftColors.textSecondary,
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(c, false),
+                          child: const Text("Cancel"),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(c, true),
+                          child: Text(
+                            "Delete",
+                            style: GoogleFonts.outfit(
+                              color: SoftColors.error,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await ref
+                        .read(ordersRepositoryProvider)
+                        .deleteOrder(currentOrder);
+                    if (context.mounted) context.pop();
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: SoftColors.error.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                );
-                if (confirm == true) {
-                  await ref
-                      .read(ordersRepositoryProvider)
-                      .deleteOrder(currentOrder);
-                  if (context.mounted) context.pop();
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: SoftColors.error.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: SoftColors.error,
-                  size: 20,
+                  child: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: SoftColors.error,
+                    size: 20,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 24),
+              const SizedBox(width: 24),
+            ],
           ],
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
@@ -161,13 +174,20 @@ class OrderDetailScreen extends ConsumerWidget {
                         Icons.location_on_outlined,
                         currentOrder.deliveryAddress,
                       ),
+                      if (currentOrder.note != null &&
+                          currentOrder.note!.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        const Divider(),
+                        const SizedBox(height: 12),
+                        _InfoRow(Icons.note_outlined, currentOrder.note!),
+                      ],
                     ],
                   ),
                 ),
 
                 const SizedBox(height: 32),
                 // Items
-                _SectionHeader("Order Items"),
+                _SectionHeader("Digital Receipt"),
 
                 ListView.builder(
                   shrinkWrap: true,
@@ -175,61 +195,90 @@ class OrderDetailScreen extends ConsumerWidget {
                   itemCount: currentOrder.items.length,
                   itemBuilder: (context, index) {
                     final item = currentOrder.items[index];
+                    final totalItemPrice = item.priceAtSale * item.quantity;
+
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: SoftCard(
                         padding: const EdgeInsets.all(16),
-                        child: Row(
+                        child: Column(
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: SoftColors.brandPrimary.withValues(
-                                  alpha: 0.1,
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                "x${item.quantity}",
-                                style: GoogleFonts.outfit(
-                                  fontWeight: FontWeight.bold,
-                                  color: SoftColors.brandPrimary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.name,
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: SoftColors.brandPrimary.withValues(
+                                      alpha: 0.1,
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    "${item.quantity}x",
                                     style: GoogleFonts.outfit(
                                       fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      color: SoftColors.textMain,
+                                      color: SoftColors.brandPrimary,
                                     ),
                                   ),
-                                  Text(
-                                    item.variantName,
-                                    style: GoogleFonts.outfit(
-                                      color: SoftColors.textSecondary,
-                                      fontSize: 14,
-                                    ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.name,
+                                        style: GoogleFonts.outfit(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                          color: SoftColors.textMain,
+                                        ),
+                                      ),
+                                      Text(
+                                        item.variantName,
+                                        style: GoogleFonts.outfit(
+                                          color: SoftColors.textSecondary,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      if (item.discountAtSale > 0)
+                                        Text(
+                                          "Desc: -\$${(item.discountAtSale * item.quantity).toStringAsFixed(2)}",
+                                          style: GoogleFonts.outfit(
+                                            color: SoftColors.success,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            ),
-                            Text(
-                              "\$${(item.priceAtSale * item.quantity).toStringAsFixed(2)}",
-                              style: GoogleFonts.outfit(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: SoftColors.textMain,
-                              ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      "\$${totalItemPrice.toStringAsFixed(2)}",
+                                      style: GoogleFonts.outfit(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                        color: SoftColors.textMain,
+                                      ),
+                                    ),
+                                    Text(
+                                      "@ \$${item.priceAtSale.toStringAsFixed(2)}/ea",
+                                      style: GoogleFonts.outfit(
+                                        color: SoftColors.textSecondary,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -242,34 +291,112 @@ class OrderDetailScreen extends ConsumerWidget {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: SoftColors.brandPrimary.withValues(alpha: 0.05),
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
-                      color: SoftColors.brandPrimary.withValues(alpha: 0.1),
-                    ),
+                    border: Border.all(color: SoftColors.border),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
                     children: [
-                      Text(
-                        "Total Amount",
-                        style: GoogleFonts.outfit(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: SoftColors.textMain,
-                        ),
+                      _SummaryRow(
+                        "Subtotal",
+                        "\$${currentOrder.items.fold(0.0, (p, c) => p + (c.priceAtSale * c.quantity)).toStringAsFixed(2)}",
                       ),
-                      Text(
-                        "\$${currentOrder.totalAmount.toStringAsFixed(2)}",
-                        style: GoogleFonts.outfit(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: SoftColors.brandPrimary,
-                        ),
+                      const SizedBox(height: 8),
+                      _SummaryRow(
+                        "Delivery Fee",
+                        "\$${currentOrder.logistics.deliveryFeeCharged.toStringAsFixed(2)}",
+                        isHighlight: true,
+                        color: SoftColors.brandPrimary,
+                      ),
+                      const Divider(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "Total Amount",
+                            style: GoogleFonts.outfit(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: SoftColors.textMain,
+                            ),
+                          ),
+                          Text(
+                            "\$${currentOrder.totalAmount.toStringAsFixed(2)}",
+                            style: GoogleFonts.outfit(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: SoftColors.brandPrimary,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
+
+                // Profit Analysis (Owner Only)
+                if (!isEmployee) ...[
+                  const SizedBox(height: 24),
+                  Theme(
+                    data: Theme.of(
+                      context,
+                    ).copyWith(dividerColor: Colors.transparent),
+                    child: ExpansionTile(
+                      title: Text(
+                        "Profit Analysis (Private)",
+                        style: GoogleFonts.outfit(
+                          fontWeight: FontWeight.bold,
+                          color: SoftColors.textMain,
+                        ),
+                      ),
+                      backgroundColor: SoftColors.background,
+                      collapsedBackgroundColor: SoftColors.textMain.withOpacity(
+                        0.05,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      collapsedShape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            children: [
+                              _SummaryRow(
+                                "Total Revenue",
+                                "\$${currentOrder.totalRevenue.toStringAsFixed(2)}",
+                                color: SoftColors.success,
+                              ),
+                              const SizedBox(height: 8),
+                              _SummaryRow(
+                                "COGS (Product Cost)",
+                                "-\$${((currentOrder.totalExpense - (currentOrder.logistics.actualDeliveryCost ?? 0))).toStringAsFixed(2)}",
+                                color: SoftColors.error,
+                              ),
+                              const SizedBox(height: 8),
+                              _SummaryRow(
+                                "Delivery Paid",
+                                "-\$${(currentOrder.logistics.actualDeliveryCost ?? 0).toStringAsFixed(2)}",
+                                color: SoftColors.error,
+                              ),
+                              const Divider(),
+                              _SummaryRow(
+                                "Net Profit",
+                                "\$${currentOrder.netProfit.toStringAsFixed(2)}",
+                                isHighlight: true,
+                                color: currentOrder.netProfit >= 0
+                                    ? SoftColors.success
+                                    : SoftColors.error,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 48),
 
@@ -279,17 +406,159 @@ class OrderDetailScreen extends ConsumerWidget {
                     label: "Mark as Delivering",
                     icon: Icons.local_shipping_outlined,
                     backgroundColor: SoftColors.brandPrimary,
-                    onTap: () {
-                      ref
-                          .read(ordersRepositoryProvider)
-                          .updateOrderStatus(
-                            currentOrder.id,
-                            OrderStatus.delivering,
+                    onTap: () async {
+                      // 1. Show Dialog to record Expense
+                      final actualCost = await showDialog<double>(
+                        context: context,
+                        builder: (context) {
+                          final feeCharged =
+                              currentOrder.logistics.deliveryFeeCharged;
+                          final controller = TextEditingController();
+                          return AlertDialog(
+                            backgroundColor: SoftColors.surface,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                SoftColors.cardRadius,
+                              ),
+                            ),
+                            title: Text(
+                              "Record Delivery Expense",
+                              style: GoogleFonts.outfit(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: SoftColors.warning.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.info_outline,
+                                        size: 16,
+                                        color: SoftColors.warning,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          "Customer charged: \$${feeCharged.toStringAsFixed(2)}",
+                                          style: GoogleFonts.outfit(
+                                            color: SoftColors.textMain,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  "Actual Cost to Driver",
+                                  style: GoogleFonts.outfit(
+                                    color: SoftColors.textSecondary,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                TextField(
+                                  controller: controller,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: InputDecoration(
+                                    hintText: "Enter amount paid",
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                // Quick Action: Match
+                                InkWell(
+                                  onTap: () {
+                                    controller.text = feeCharged.toString();
+                                  },
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: SoftColors.brandPrimary,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        "Match Charged Amount (\$${feeCharged.toStringAsFixed(2)})",
+                                        style: GoogleFonts.outfit(
+                                          color: SoftColors.brandPrimary,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text("Cancel"),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  final val = double.tryParse(controller.text);
+                                  if (val == null) {
+                                    return; // forcing valid input
+                                  }
+                                  Navigator.pop(context, val);
+                                },
+                                child: Text(
+                                  "Confirm & Deliver",
+                                  style: GoogleFonts.outfit(
+                                    fontWeight: FontWeight.bold,
+                                    color: SoftColors.brandPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
                           );
+                        },
+                      );
+
+                      if (actualCost != null) {
+                        // 2. Update Order
+                        final updatedLogistics = OrderLogistics(
+                          deliveryFeeCharged:
+                              currentOrder.logistics.deliveryFeeCharged,
+                          deliveryType: currentOrder.logistics.deliveryType,
+                          actualDeliveryCost: actualCost,
+                        );
+
+                        final updatedOrder = currentOrder.copyWith(
+                          status: OrderStatus.delivering,
+                          logistics: updatedLogistics,
+                          updatedAt: DateTime.now(),
+                        );
+
+                        await ref
+                            .read(ordersRepositoryProvider)
+                            .updateOrder(updatedOrder);
+                      }
                     },
                   ),
 
-                if (currentOrder.status == OrderStatus.delivering)
+                if (currentOrder.status == OrderStatus.delivering &&
+                    !isEmployee)
                   SoftButton(
                     label: "Mark as Completed",
                     icon: Icons.check_circle_outline_rounded,
@@ -390,6 +659,45 @@ class _StatusBadge extends StatelessWidget {
           fontSize: 12,
         ),
       ),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool isHighlight;
+  final Color? color;
+
+  const _SummaryRow(
+    this.label,
+    this.value, {
+    this.isHighlight = false,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.outfit(
+            fontSize: isHighlight ? 16 : 14,
+            fontWeight: isHighlight ? FontWeight.bold : FontWeight.normal,
+            color: SoftColors.textSecondary,
+          ),
+        ),
+        Text(
+          value,
+          style: GoogleFonts.outfit(
+            fontSize: isHighlight ? 16 : 14,
+            fontWeight: isHighlight ? FontWeight.bold : FontWeight.w600,
+            color: color ?? SoftColors.textMain,
+          ),
+        ),
+      ],
     );
   }
 }

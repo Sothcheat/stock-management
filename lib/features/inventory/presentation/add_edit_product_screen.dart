@@ -5,10 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../design_system.dart';
 import '../../inventory/data/inventory_repository.dart';
 import '../../inventory/domain/product.dart';
+import '../../inventory/domain/category.dart';
+import '../../inventory/data/providers/category_provider.dart';
 import 'add_variant_dialog.dart';
 
 class AddEditProductScreen extends ConsumerStatefulWidget {
@@ -31,6 +35,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
   late TextEditingController _costPriceController;
   late TextEditingController _shipmentCostController;
   late TextEditingController _stockController;
+  late TextEditingController _lowStockController;
   late TextEditingController _categoryController;
 
   // Discount
@@ -44,6 +49,9 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
 
   // Logic to persist initial category if not fully public
   String? _initialCategoryId;
+
+  // Temporary storage for newly created category name (for display before stream updates)
+  String? _tempNewCategoryName;
 
   // Variants
   List<ProductVariant> _variants = [];
@@ -63,6 +71,9 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
       text: p?.shipmentCost?.toString(),
     );
     _stockController = TextEditingController(text: p?.totalStock.toString());
+    _lowStockController = TextEditingController(
+      text: p?.lowStockThreshold.toString() ?? '5',
+    );
     _categoryController = TextEditingController(text: p?.categoryId);
     _initialCategoryId = p?.categoryId;
 
@@ -93,6 +104,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
     _costPriceController.dispose();
     _shipmentCostController.dispose();
     _stockController.dispose();
+    _lowStockController.dispose();
     _categoryController.dispose();
     _discountController.dispose();
     super.dispose();
@@ -102,9 +114,40 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
     final picker = ImagePicker();
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
-      setState(() {
-        _imageFile = File(picked.path);
-      });
+      final cropped = await ImageCropper()
+          .cropImage(
+            sourcePath: picked.path,
+            uiSettings: [
+              AndroidUiSettings(
+                toolbarTitle: 'Crop to Square',
+                toolbarColor: SoftColors.brandPrimary,
+                toolbarWidgetColor: Colors.white,
+                initAspectRatio: CropAspectRatioPreset.square,
+                lockAspectRatio: true,
+                hideBottomControls: true, // Force user to focus on crop
+              ),
+              IOSUiSettings(
+                title: 'Crop to Square',
+                aspectRatioLockEnabled: true,
+                resetAspectRatioEnabled: false,
+              ),
+            ],
+            aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+          )
+          .catchError((e) {
+            debugPrint("Cropper Error: $e");
+            return null;
+          });
+
+      if (cropped != null) {
+        setState(() {
+          _imageFile = File(cropped.path);
+        });
+      } else {
+        // Did they cancel, or did it fail?
+        // Usually null means cancelled.
+        // We can optionally verify here, but usually silent is fine for cancel.
+      }
     }
   }
 
@@ -125,12 +168,10 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
         discountValue = double.tryParse(_discountController.text);
       }
 
-      // Calculate total stock from variants if exist, else use controller
-      int totalStock = 0;
-      if (_variants.isNotEmpty) {
-        totalStock = _variants.fold(0, (sum, v) => sum + v.stockQuantity);
-      } else {
-        totalStock = int.tryParse(_stockController.text) ?? 0;
+      // Calculate manual stock
+      int? manualStock;
+      if (_variants.isEmpty) {
+        manualStock = int.tryParse(_stockController.text) ?? 0;
       }
 
       final product = Product(
@@ -144,7 +185,8 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
         discountValue: discountValue,
         discountType: _discountType.value,
         variants: _variants,
-        totalStock: totalStock,
+        manualStock: manualStock, // Use manualStock instead of totalStock
+        lowStockThreshold: int.tryParse(_lowStockController.text) ?? 5,
         imagePath: _currentImageUrl,
         createdAt: widget.product?.createdAt ?? DateTime.now(),
       );
@@ -195,9 +237,14 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
     );
   }
 
-  Future<String?> _addNewCategory() async {
-    String newCategory = '';
-    return showDialog<String>(
+  // ... (omitted _addNewCategory and _buildDiscountTypeBtn for brevity, assuming no changes there)
+  // Re-include them if they were in the range, but I'll skip to build method changes.
+  // Actually, replace_file_content needs exact context.
+  // I will target the _saveProduct method specifically first.
+
+  Future<Category?> _addNewCategory() async {
+    String newCategoryName = '';
+    return showDialog<Category>(
       context: context,
       builder: (context) {
         return AlertDialog(
@@ -211,7 +258,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
           ),
           content: ModernInput(
             hintText: 'Category Name',
-            onChanged: (v) => newCategory = v,
+            onChanged: (v) => newCategoryName = v,
           ),
           actions: [
             TextButton(
@@ -220,13 +267,18 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
             ),
             TextButton(
               onPressed: () async {
-                if (newCategory.isNotEmpty) {
+                if (newCategoryName.isNotEmpty) {
                   try {
+                    final newCat = Category(
+                      id: const Uuid().v4(),
+                      name: newCategoryName.trim(),
+                      icon: '📦',
+                    );
                     await ref
-                        .read(inventoryRepositoryProvider)
-                        .addCategory(newCategory.trim());
+                        .read(categoryRepositoryProvider)
+                        .addCategory(newCat);
                     if (context.mounted) {
-                      Navigator.pop(context, newCategory.trim());
+                      Navigator.pop(context, newCat);
                     }
                   } catch (e) {
                     if (context.mounted) {
@@ -389,23 +441,29 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                     ),
                     child: Consumer(
                       builder: (context, ref, child) {
-                        final categoriesAsync = ref.watch(
-                          categoriesStreamProvider,
-                        );
+                        final categoriesAsync = ref.watch(categoryListProvider);
 
                         return categoriesAsync.when(
                           data: (categories) {
                             return ValueListenableBuilder<TextEditingValue>(
                               valueListenable: _categoryController,
                               builder: (context, controllerValue, _) {
-                                final currentText = controllerValue.text;
-                                final bool isInList = categories.any(
-                                  (c) => c.name == currentText,
+                                final currentId = controllerValue.text;
+
+                                // FIX: Deduplicate categories to prevent Dropdown crash
+                                final uniqueCategories = {
+                                  for (var c in categories) c.id: c,
+                                }.values.toList();
+
+                                // Check list against dedicated list
+                                final bool isInList = uniqueCategories.any(
+                                  (c) => c.id == currentId,
                                 );
-                                // Ensure value is not null if text exists, so it shows in dropdown (even if not in list)
-                                final effectiveValue = currentText.isNotEmpty
-                                    ? currentText
+
+                                final effectiveValue = currentId.isNotEmpty
+                                    ? currentId
                                     : null;
+
                                 return DropdownButtonFormField<String>(
                                   key: ValueKey(
                                     '$effectiveValue-$_dropdownKey',
@@ -421,8 +479,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                       color: SoftColors.textSecondary
                                           .withValues(alpha: 0.7),
                                     ),
-                                    filled:
-                                        false, // Container handles background
+                                    filled: false,
                                     border: InputBorder.none,
                                     enabledBorder: InputBorder.none,
                                     focusedBorder: InputBorder.none,
@@ -447,11 +504,11 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                         ),
                                       ),
                                     ),
-                                    // 1. Initial Category (Legacy) - Always keep available so user can revert
+                                    // 1. Initial Category (Legacy)
                                     if (_initialCategoryId != null &&
                                         _initialCategoryId!.isNotEmpty &&
-                                        !categories.any(
-                                          (c) => c.name == _initialCategoryId,
+                                        !uniqueCategories.any(
+                                          (c) => c.id == _initialCategoryId,
                                         ) &&
                                         _initialCategoryId != '__new__')
                                       DropdownMenuItem(
@@ -465,7 +522,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                         ),
                                       ),
 
-                                    // 2. Current Custom Value (if different from initial)
+                                    // 2. Newly Created / Unknown Value
                                     if (effectiveValue != null &&
                                         !isInList &&
                                         effectiveValue != '__new__' &&
@@ -473,16 +530,18 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                       DropdownMenuItem(
                                         value: effectiveValue,
                                         child: Text(
-                                          effectiveValue,
+                                          _tempNewCategoryName ?? "Loading...",
                                           style: GoogleFonts.outfit(
                                             color: SoftColors.textMain,
                                             fontSize: 16,
                                           ),
                                         ),
                                       ),
-                                    ...categories.map(
+
+                                    // 3. Main List (Deduped)
+                                    ...uniqueCategories.map(
                                       (c) => DropdownMenuItem(
-                                        value: c.name,
+                                        value: c.id,
                                         child: Text(
                                           c.name,
                                           style: GoogleFonts.outfit(
@@ -492,6 +551,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                         ),
                                       ),
                                     ),
+
                                     DropdownMenuItem(
                                       value: '__new__',
                                       child: Row(
@@ -516,11 +576,15 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                                   ],
                                   onChanged: (val) async {
                                     if (val == '__new__') {
-                                      final newName = await _addNewCategory();
+                                      final newCat = await _addNewCategory();
 
-                                      if (newName != null) {
-                                        // UPDATE CONTROLLER ONLY - NO setState!
-                                        _categoryController.text = newName;
+                                      if (newCat != null) {
+                                        // Update state to show name immediately
+                                        setState(() {
+                                          _tempNewCategoryName = newCat.name;
+                                        });
+                                        // Update controller with ID
+                                        _categoryController.text = newCat.id;
                                       } else {
                                         // Cancelled - Force widget rebuild with new KEY
                                         setState(() {
@@ -896,6 +960,15 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                   },
                 ),
 
+              const SizedBox(height: 24),
+              // LOW STOCK ALERT INPUT
+              ModernInput(
+                controller: _lowStockController,
+                hintText: '5',
+                labelText: 'Alert me when stock is below...',
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              ),
               const SizedBox(height: 48),
 
               SoftButton(

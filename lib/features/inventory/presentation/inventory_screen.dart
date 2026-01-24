@@ -4,8 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
-import '../../products/data/providers/product_provider.dart';
+import '../../auth/domain/user_model.dart';
+import '../../auth/data/providers/auth_providers.dart';
 import '../../inventory/domain/product.dart';
+import '../../inventory/domain/category.dart';
+import '../data/providers/category_provider.dart';
+import 'providers/inventory_filter_provider.dart';
 
 class InventoryScreen extends ConsumerStatefulWidget {
   const InventoryScreen({super.key});
@@ -23,67 +27,272 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
     super.dispose();
   }
 
+  void _showSortSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, _) {
+            final currentSort = ref.watch(inventoryFilterProvider).sortOption;
+            return Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Sort By",
+                    style: GoogleFonts.outfit(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: SoftColors.textMain,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildSortOption(
+                    context,
+                    ref,
+                    "Default (Stock Priority)",
+                    InventorySortOption.defaultSort,
+                    currentSort,
+                  ),
+                  _buildSortOption(
+                    context,
+                    ref,
+                    "Name (A-Z)",
+                    InventorySortOption.nameAsc,
+                    currentSort,
+                  ),
+                  _buildSortOption(
+                    context,
+                    ref,
+                    "Price (High - Low)",
+                    InventorySortOption.priceHighLow,
+                    currentSort,
+                  ),
+                  _buildSortOption(
+                    context,
+                    ref,
+                    "Price (Low - High)",
+                    InventorySortOption.priceLowHigh,
+                    currentSort,
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSortOption(
+    BuildContext context,
+    WidgetRef ref,
+    String label,
+    InventorySortOption option,
+    InventorySortOption current,
+  ) {
+    final isSelected = option == current;
+    return InkWell(
+      onTap: () {
+        ref.read(inventoryFilterProvider.notifier).setSortOption(option);
+        Navigator.pop(context);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              isSelected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: isSelected
+                  ? SoftColors.brandPrimary
+                  : SoftColors.textSecondary,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: GoogleFonts.outfit(
+                fontSize: 16,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                color: isSelected
+                    ? SoftColors.textMain
+                    : SoftColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // SWITCHED TO NEW PROVIDER
-    final productsAsync = ref.watch(productsProvider);
+    final filteredInventoryAsync = ref.watch(filteredInventoryProvider);
+    final selectedCategoryId = ref
+        .watch(inventoryFilterProvider)
+        .selectedCategoryId;
 
     return SoftScaffold(
       title: 'Inventory',
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'inventory_fab',
-        onPressed: () {
-          context.go('/inventory/add');
-        },
-        backgroundColor: SoftColors.brandPrimary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: Text(
-          "New Product",
-          style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
+      floatingActionButton:
+          ref.watch(currentUserProfileProvider).value?.role == UserRole.employee
+          ? null
+          : FloatingActionButton.extended(
+              heroTag: 'inventory_fab',
+              onPressed: () {
+                context.go('/inventory/add');
+              },
+              backgroundColor: SoftColors.brandPrimary,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add),
+              label: Text(
+                "New Product",
+                style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
       body: Column(
         children: [
-          // Search Bar
+          // Search Bar & Sort Button
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-            child: ModernInput(
-              controller: _searchController,
-              hintText: 'Search products...',
-              prefixIcon: Icons.search,
-              suffixIcon: ValueListenableBuilder(
-                valueListenable: _searchController,
-                builder: (context, value, child) {
-                  return value.text.isEmpty
-                      ? const SizedBox.shrink()
-                      : IconButton(
-                          icon: const Icon(
-                            Icons.clear,
-                            color: SoftColors.textSecondary,
-                          ),
-                          onPressed: () {
-                            _searchController.clear();
-                          },
-                        );
-                },
-              ),
-              onChanged: (val) => setState(() {}),
+            child: Row(
+              children: [
+                Expanded(
+                  child: ModernInput(
+                    controller: _searchController,
+                    hintText: 'Search products...',
+                    prefixIcon: Icons.search,
+                    onChanged: (val) {
+                      ref
+                          .read(inventoryFilterProvider.notifier)
+                          .setSearchQuery(val);
+                    },
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(
+                              Icons.clear,
+                              color: SoftColors.textSecondary,
+                            ),
+                            onPressed: () {
+                              _searchController.clear();
+                              ref
+                                  .read(inventoryFilterProvider.notifier)
+                                  .setSearchQuery('');
+                            },
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                BounceButton(
+                  onTap: _showSortSheet,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: SoftColors.textMain.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.filter_list_rounded,
+                      color: SoftColors.brandPrimary,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
 
+          // Category Chips
+          SizedBox(
+            height: 50,
+            child: Consumer(
+              builder: (context, ref, child) {
+                final categoriesAsync = ref.watch(categoryListProvider);
+                return categoriesAsync.when(
+                  data: (categories) {
+                    final allCategories = [
+                      // "All" pseudo-category
+                      Category(id: 'all', name: 'All', icon: ''),
+                      ...categories,
+                    ];
+
+                    return ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: allCategories.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final cat = allCategories[index];
+                        final isAll = cat.id == 'all';
+                        final isSelected = isAll
+                            ? selectedCategoryId == null
+                            : selectedCategoryId == cat.id;
+
+                        return ChoiceChip(
+                          showCheckmark: true,
+                          checkmarkColor: Colors.white,
+                          label: Text(cat.name),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            if (selected) {
+                              ref
+                                  .read(inventoryFilterProvider.notifier)
+                                  .selectCategory(isAll ? null : cat.id);
+                            }
+                          },
+                          selectedColor: SoftColors.brandPrimary,
+                          backgroundColor: Colors.white,
+                          labelStyle: GoogleFonts.outfit(
+                            color: isSelected
+                                ? Colors.white
+                                : SoftColors.textSecondary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            side: BorderSide(
+                              color: isSelected
+                                  ? Colors.transparent
+                                  : SoftColors.textSecondary.withValues(
+                                      alpha: 0.1,
+                                    ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // Product Grid
           Expanded(
-            child: productsAsync.when(
+            child: filteredInventoryAsync.when(
               data: (products) {
-                final query = _searchController.text.toLowerCase();
-                final filteredProducts = products.where((p) {
-                  return p.name.toLowerCase().contains(query) ||
-                      p.id.contains(query);
-                }).toList();
-
-                if (filteredProducts.isEmpty) {
+                if (products.isEmpty) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -107,22 +316,20 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                 }
 
                 return GridView.builder(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    childAspectRatio: 0.70,
+                    childAspectRatio: 0.65,
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                   ),
-                  itemCount: filteredProducts.length,
-                  // Performance optimization: cacheExtent could be added if list is huge
+                  itemCount: products.length,
                   itemBuilder: (context, index) {
-                    final product = filteredProducts[index];
+                    final product = products[index];
                     return _ProductCard(product: product);
                   },
                 );
               },
-              // Shimmer Loading State (Performance Test)
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, s) => Center(child: Text("Error: $e")),
             ),
@@ -140,7 +347,8 @@ class _ProductCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isOutOfStock = product.totalStock <= 0;
-    final isLowStock = !isOutOfStock && product.totalStock < 10;
+    final isLowStock =
+        !isOutOfStock && product.totalStock <= product.lowStockThreshold;
 
     return BounceButton(
       onTap: () {
@@ -151,8 +359,9 @@ class _ProductCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image Area
-            Expanded(
+            // Image Area (Square)
+            AspectRatio(
+              aspectRatio: 1,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(SoftColors.cardRadius),
@@ -219,15 +428,39 @@ class _ProductCard extends ConsumerWidget {
                     children: [
                       // Price
                       Flexible(
-                        child: Text(
-                          '\$${product.price.toStringAsFixed(2)}',
-                          style: GoogleFonts.outfit(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            color: SoftColors.brandPrimary,
-                            height: 1.0,
-                          ),
-                        ),
+                        child: product.hasDiscount
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '\$${product.price.toStringAsFixed(2)}',
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.lineThrough,
+                                      color: SoftColors.textSecondary,
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${product.finalPrice.toStringAsFixed(2)}',
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                      color: SoftColors.brandPrimary,
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                '\$${product.price.toStringAsFixed(2)}',
+                                style: GoogleFonts.outfit(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                  color: SoftColors.brandPrimary,
+                                  height: 1.0,
+                                ),
+                              ),
                       ),
                       const SizedBox(width: 8),
                       // Stock Badge

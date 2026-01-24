@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
 import '../../auth/data/auth_repository.dart';
@@ -23,19 +24,38 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
+      final input = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+      String emailToUse = input;
+
+      // Case B: Staff ID (No '@' symbol)
+      if (!input.contains('@')) {
+        final fetchedEmail = await ref
+            .read(authRepositoryProvider)
+            .getEmailFromStaffId(input);
+
+        if (fetchedEmail == null) {
+          throw FirebaseAuthException(
+            code: 'invalid-staff-id',
+            message: 'Invalid Staff ID. Please checking your registry.',
+          );
+        }
+        emailToUse = fetchedEmail;
+      }
+
+      // Proceed with Email (either direct or resolved)
       await ref
           .read(authRepositoryProvider)
-          .signInWithEmailAndPassword(
-            _emailController.text.trim(),
-            _passwordController.text.trim(),
-          );
+          .signInWithEmailAndPassword(emailToUse, password);
     } catch (e) {
       if (mounted) {
+        String message = 'Login failed';
+        if (e is FirebaseAuthException) {
+          message = e.message ?? message;
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Login failed: ${e.toString()}'),
-            backgroundColor: SoftColors.error,
-          ),
+          SnackBar(content: Text(message), backgroundColor: SoftColors.error),
         );
       }
     } finally {
@@ -101,7 +121,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         children: [
                           ModernInput(
                             controller: _emailController,
-                            hintText: 'Email Address',
+                            hintText: 'Email Address or Staff ID',
                             prefixIcon: Icons.email_outlined,
                             keyboardType: TextInputType.emailAddress,
                             validator: (value) => value == null || value.isEmpty

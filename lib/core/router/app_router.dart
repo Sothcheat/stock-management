@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/data/auth_repository.dart'; // Changed from auth_controller
+import '../../features/auth/data/providers/auth_providers.dart';
+import '../../features/auth/domain/user_model.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/inventory/presentation/inventory_screen.dart';
@@ -17,9 +19,8 @@ import '../../features/reports/presentation/report_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(
-    authStateChangesProvider,
-  ); // Checked provider name
+  final authState = ref.watch(authStateChangesProvider);
+  final userProfileAsync = ref.watch(currentUserProfileProvider);
 
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
@@ -35,6 +36,25 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       if (!isAuthenticated) return isLoginRoute ? null : '/login';
       if (isLoginRoute) return '/';
+
+      // Role Guard for Restricted Routes
+      final user = userProfileAsync.value;
+      if (user?.role == UserRole.employee) {
+        final restrictedRoutes = [
+          '/reports',
+          '/inventory/add',
+          '/inventory/edit',
+          '/orders/new-order',
+        ];
+
+        // Check if current path starts with any restricted route
+        // We use check against URI path to catch sub-routes if any
+        final currentPath = state.uri.path;
+        if (restrictedRoutes.any((route) => currentPath.startsWith(route))) {
+          return '/';
+        }
+      }
+
       return null;
     },
     routes: [
@@ -107,7 +127,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          // Branch 3: Reports
+          // Branch 3: Reports (Guarded)
           StatefulShellBranch(
             routes: [
               GoRoute(
@@ -134,52 +154,89 @@ final routerProvider = Provider<GoRouter>((ref) {
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
-class ScaffoldWithNavBar extends StatelessWidget {
+class ScaffoldWithNavBar extends ConsumerWidget {
   const ScaffoldWithNavBar({required this.navigationShell, Key? key})
     : super(key: key ?? const ValueKey<String>('ScaffoldWithNavBar'));
 
   final StatefulNavigationShell navigationShell;
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: navigationShell,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        onDestinationSelected: (index) {
-          navigationShell.goBranch(
-            index,
-            initialLocation: index == navigationShell.currentIndex,
-          );
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.inventory_2_outlined),
-            selectedIcon: Icon(Icons.inventory_2),
-            label: 'Inventory',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.receipt_long_outlined),
-            selectedIcon: Icon(Icons.receipt_long),
-            label: 'Orders',
-          ),
-          NavigationDestination(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userRole = ref.watch(currentUserProfileProvider).value?.role;
+    final isEmployee = userRole == UserRole.employee;
+
+    // Define destinations with their corresponding branch index
+    final destinations = <_NavBarItem>[
+      _NavBarItem(
+        branchIndex: 0,
+        destination: const NavigationDestination(
+          icon: Icon(Icons.home_outlined),
+          selectedIcon: Icon(Icons.home),
+          label: 'Home',
+        ),
+      ),
+      _NavBarItem(
+        branchIndex: 1,
+        destination: const NavigationDestination(
+          icon: Icon(Icons.inventory_2_outlined),
+          selectedIcon: Icon(Icons.inventory_2),
+          label: 'Inventory',
+        ),
+      ),
+      _NavBarItem(
+        branchIndex: 2,
+        destination: const NavigationDestination(
+          icon: Icon(Icons.receipt_long_outlined),
+          selectedIcon: Icon(Icons.receipt_long),
+          label: 'Orders',
+        ),
+      ),
+      if (!isEmployee)
+        _NavBarItem(
+          branchIndex: 3,
+          destination: const NavigationDestination(
             icon: Icon(Icons.insert_chart_outlined_outlined),
             selectedIcon: Icon(Icons.insert_chart),
             label: 'Reports',
           ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
+        ),
+      _NavBarItem(
+        branchIndex: 4,
+        destination: const NavigationDestination(
+          icon: Icon(Icons.person_outline),
+          selectedIcon: Icon(Icons.person),
+          label: 'Profile',
+        ),
+      ),
+    ];
+
+    // Find the current UI index based on the active branch
+    // If the active branch is not in our list (shouldn't happen), default to 0
+    final currentBranchIndex = navigationShell.currentIndex;
+    final currentUiIndex = destinations.indexWhere(
+      (item) => item.branchIndex == currentBranchIndex,
+    );
+    final selectedIndex = currentUiIndex >= 0 ? currentUiIndex : 0;
+
+    return Scaffold(
+      body: navigationShell,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: selectedIndex,
+        onDestinationSelected: (index) {
+          final branchIndex = destinations[index].branchIndex;
+          navigationShell.goBranch(
+            branchIndex,
+            initialLocation: branchIndex == navigationShell.currentIndex,
+          );
+        },
+        destinations: destinations.map((e) => e.destination).toList(),
       ),
     );
   }
+}
+
+class _NavBarItem {
+  final int branchIndex;
+  final NavigationDestination destination;
+  _NavBarItem({required this.branchIndex, required this.destination});
 }

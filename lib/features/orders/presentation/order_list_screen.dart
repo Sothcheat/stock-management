@@ -4,8 +4,10 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../../design_system.dart';
-import '../../orders/data/orders_repository.dart';
+import '../../orders/data/firebase_orders_repository.dart';
 import '../../orders/domain/order.dart';
+import '../../auth/data/providers/auth_providers.dart';
+import '../../auth/domain/user_model.dart';
 
 class OrderListScreen extends ConsumerStatefulWidget {
   const OrderListScreen({super.key});
@@ -33,23 +35,38 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
   @override
   Widget build(BuildContext context) {
     final ordersAsync = ref.watch(ordersStreamProvider);
+    final userProfileAsync = ref.watch(currentUserProfileProvider);
+
+    if (userProfileAsync.isLoading) {
+      return const Scaffold(
+        backgroundColor: SoftColors.background,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final user = userProfileAsync.value;
+    final isEmployee = user?.role == UserRole.employee;
 
     return SoftScaffold(
       title: 'Orders',
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'orders_fab',
-        onPressed: () {
-          context.go('/orders/new-order');
-        },
-        backgroundColor: SoftColors.brandPrimary,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: Text(
-          "New Order",
-          style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
+      floatingActionButton: isEmployee
+          ? null
+          : FloatingActionButton.extended(
+              heroTag: 'orders_fab',
+              onPressed: () {
+                context.go('/orders/new-order');
+              },
+              backgroundColor: SoftColors.brandPrimary,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add),
+              label: Text(
+                "New Order",
+                style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
       body: Column(
         children: [
           // Custom Tab Bar

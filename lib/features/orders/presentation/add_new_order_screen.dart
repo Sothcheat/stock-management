@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
 import '../../auth/data/auth_repository.dart';
-import '../../orders/data/orders_repository.dart';
+import '../../orders/data/firebase_orders_repository.dart';
 import '../../orders/domain/order.dart';
 
 class AddNewOrderScreen extends ConsumerStatefulWidget {
@@ -18,27 +18,59 @@ class AddNewOrderScreen extends ConsumerStatefulWidget {
 class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  // Customer Info
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
-  final _noteController = TextEditingController(); // Added note controller
+  final _noteController = TextEditingController();
+  final _deliveryFeeController = TextEditingController();
 
-  // Cart
   final List<OrderItem> _items = [];
   bool _isLoading = false;
+
+  // Delivery
+  double _deliveryFee = 0.0;
+  String _deliveryType = 'Manual';
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen to manual input changes
+    _deliveryFeeController.addListener(() {
+      final value = double.tryParse(_deliveryFeeController.text) ?? 0.0;
+      if (_deliveryType == 'Manual' && value != _deliveryFee) {
+        setState(() {
+          _deliveryFee = value;
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
-    _noteController.dispose(); // Dispose note
+    _noteController.dispose();
+    _deliveryFeeController.dispose();
     super.dispose();
   }
 
-  double get _totalAmount =>
+  double get _subtotal =>
       _items.fold(0, (sum, item) => sum + (item.priceAtSale * item.quantity));
+
+  double get _totalAmount => _subtotal + _deliveryFee;
+
+  void _setDeliveryOption(String type, double fee) {
+    setState(() {
+      _deliveryType = type;
+      _deliveryFee = fee;
+      if (type != 'Manual') {
+        _deliveryFeeController.clear();
+      } else {
+        _deliveryFeeController.text = fee.toString();
+      }
+    });
+  }
 
   Future<void> _submitOrder() async {
     if (!_formKey.currentState!.validate()) return;
@@ -56,16 +88,21 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
       if (user == null) throw Exception("User not logged in");
 
       final order = OrderModel(
-        id: '', // Repo will handle or Firestore auto-id
+        id: '',
         customer: OrderCustomer(
           name: _nameController.text.trim(),
           primaryPhone: _phoneController.text.trim(),
-          note: _noteController.text.trim(), // Include note
         ),
         deliveryAddress: _addressController.text.trim(),
         items: _items,
+        logistics: OrderLogistics(
+          deliveryFeeCharged: _deliveryFee,
+          deliveryType: _deliveryType,
+          // actualDeliveryCost is NOT set here (Revenue side only)
+        ),
         totalAmount: _totalAmount,
         status: OrderStatus.prepping,
+        note: _noteController.text.trim(),
         createdBy: user.uid,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -107,6 +144,42 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
     }
   }
 
+  Widget _buildDeliveryOption(String label, String type, double fee) {
+    final isSelected =
+        _deliveryType == type && (type != 'Manual' || _deliveryFee == fee);
+    // Logic for Manual selection is broader, but for Preset chips
+    // Wait, Manual is a category.
+    // Let's modify:
+    // Types: 'Free', 'Preset', 'Manual'.
+    // If user clicks a preset, type='Preset'.
+    // If user types in box, type='Manual'.
+
+    final isActive = _deliveryType == type;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: isActive,
+        onSelected: (selected) {
+          if (selected) {
+            _setDeliveryOption(type, fee);
+          }
+        },
+        selectedColor: SoftColors.brandPrimary.withOpacity(0.1),
+        labelStyle: GoogleFonts.outfit(
+          color: isActive ? SoftColors.brandPrimary : SoftColors.textSecondary,
+          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+        ),
+        backgroundColor: Colors.white,
+        side: BorderSide(
+          color: isActive ? SoftColors.brandPrimary : SoftColors.border,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SoftScaffold(
@@ -122,6 +195,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // ... (Prev Code: Customer Details) ...
                     Text(
                       "Customer Details",
                       style: GoogleFonts.outfit(
@@ -140,21 +214,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             labelText: "Customer Name",
                             prefixIcon: Icons.person_outline_rounded,
                             activePrefixIcon: Icons.person_rounded,
-                            suffixIcon:
-                                ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: _nameController,
-                                  builder: (context, value, child) {
-                                    return value.text.isEmpty
-                                        ? const SizedBox.shrink()
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.clear,
-                                              color: SoftColors.textSecondary,
-                                            ),
-                                            onPressed: _nameController.clear,
-                                          );
-                                  },
-                                ),
+                            showClearButton: true,
                             validator: (v) =>
                                 v?.isEmpty == true ? 'Required' : null,
                           ),
@@ -165,21 +225,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             labelText: "Phone Number",
                             prefixIcon: Icons.phone_outlined,
                             activePrefixIcon: Icons.phone_rounded,
-                            suffixIcon:
-                                ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: _phoneController,
-                                  builder: (context, value, child) {
-                                    return value.text.isEmpty
-                                        ? const SizedBox.shrink()
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.clear,
-                                              color: SoftColors.textSecondary,
-                                            ),
-                                            onPressed: _phoneController.clear,
-                                          );
-                                  },
-                                ),
+                            showClearButton: true,
                             keyboardType: TextInputType.phone,
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
@@ -195,21 +241,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             labelText: "Delivery Address",
                             prefixIcon: Icons.location_on_outlined,
                             activePrefixIcon: Icons.location_on,
-                            suffixIcon:
-                                ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: _addressController,
-                                  builder: (context, value, child) {
-                                    return value.text.isEmpty
-                                        ? const SizedBox.shrink()
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.clear,
-                                              color: SoftColors.textSecondary,
-                                            ),
-                                            onPressed: _addressController.clear,
-                                          );
-                                  },
-                                ),
+                            showClearButton: true,
                             maxLines: 2,
                             validator: (v) =>
                                 v?.isEmpty == true ? 'Required' : null,
@@ -221,21 +253,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             labelText: "Note (Optional)",
                             prefixIcon: Icons.note_outlined,
                             activePrefixIcon: Icons.note,
-                            suffixIcon:
-                                ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: _noteController,
-                                  builder: (context, value, child) {
-                                    return value.text.isEmpty
-                                        ? const SizedBox.shrink()
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.clear,
-                                              color: SoftColors.textSecondary,
-                                            ),
-                                            onPressed: _noteController.clear,
-                                          );
-                                  },
-                                ),
+                            showClearButton: true,
                             maxLines: 2,
                           ),
                         ],
@@ -243,6 +261,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                     ),
                     const SizedBox(height: 32),
 
+                    // Products Section
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -423,6 +442,50 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                           );
                         },
                       ),
+
+                    const SizedBox(height: 32),
+
+                    // Delivery Fee Section
+                    Text(
+                      "Delivery Fee",
+                      style: GoogleFonts.outfit(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: SoftColors.textMain,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SoftCard(
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              _buildDeliveryOption("Free", "Free", 0.0),
+                              _buildDeliveryOption("\$1.50", "Preset", 1.50),
+                              _buildDeliveryOption("\$2.00", "Preset", 2.00),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          ModernInput(
+                            controller: _deliveryFeeController,
+                            labelText: "Manual Fee / Custom",
+                            hintText: "Enter amount",
+                            prefixIcon: Icons.delivery_dining_outlined,
+                            activePrefixIcon: Icons.delivery_dining,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            onChanged: (val) {
+                              // If user types, switch to manual mode
+                              setState(() {
+                                _deliveryType = 'Manual';
+                                _deliveryFee = double.tryParse(val) ?? 0.0;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -446,37 +509,82 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
               ],
             ),
             child: SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Total Amount",
-                        style: GoogleFonts.outfit(
-                          fontSize: 16,
-                          color: SoftColors.textSecondary,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "Subtotal",
+                          style: GoogleFonts.outfit(
+                            fontSize: 14,
+                            color: SoftColors.textSecondary,
+                          ),
                         ),
-                      ),
-                      Text(
-                        "\$${_totalAmount.toStringAsFixed(2)}",
-                        style: GoogleFonts.outfit(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: SoftColors.brandPrimary,
+                        Text(
+                          "\$${_subtotal.toStringAsFixed(2)}",
+                          style: GoogleFonts.outfit(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: SoftColors.textMain,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  SoftButton(
-                    label: "Create Order",
-                    onTap: _submitOrder,
-                    isLoading: _isLoading,
-                    icon: Icons.check_circle_outline_rounded,
-                  ),
-                ],
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "Delivery Fee",
+                          style: GoogleFonts.outfit(
+                            fontSize: 14,
+                            color: SoftColors.textSecondary,
+                          ),
+                        ),
+                        Text(
+                          "\$${_deliveryFee.toStringAsFixed(2)}",
+                          style: GoogleFonts.outfit(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: SoftColors.brandPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "Total Amount",
+                          style: GoogleFonts.outfit(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: SoftColors.textMain,
+                          ),
+                        ),
+                        Text(
+                          "\$${_totalAmount.toStringAsFixed(2)}",
+                          style: GoogleFonts.outfit(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: SoftColors.brandPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    SoftButton(
+                      label: "Create Reserved Order",
+                      onTap: _submitOrder,
+                      isLoading: _isLoading,
+                      icon: Icons.check_circle_outline_rounded,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

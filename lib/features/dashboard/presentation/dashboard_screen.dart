@@ -2,227 +2,136 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
-import '../../auth/data/auth_repository.dart';
-import 'widgets/stats_card.dart';
-import 'widgets/low_stock_list.dart';
+import '../../auth/data/providers/auth_providers.dart'; // Import this
+import 'widgets/dashboard_performance_card.dart';
+import 'widgets/stock_alert_section.dart';
+import 'widgets/active_orders_section.dart';
+import 'widgets/weekly_highlights_section.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final userAsync = ref.watch(currentUserProfileProvider);
+    final userProfileAsync = ref.watch(currentUserProfileProvider);
 
-    return userAsync.when(
-      data: (user) {
-        if (user == null) {
-          return const Scaffold(
-            backgroundColor: SoftColors.background,
-            body: Center(child: Text("User not found")),
-          );
-        }
+    if (userProfileAsync.isLoading) {
+      return const Scaffold(
+        backgroundColor: SoftColors.background,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
-        final isEmployee = user.role.name == 'employee';
-
-        return SoftScaffold(
-          title: "Dashboard",
-          actions: [
-            BounceButton(
-              onTap: () {},
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: SoftColors.textMain.withValues(alpha: 0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+    return SoftScaffold(
+      title: "Dashboard",
+      actions: [
+        BounceButton(
+          onTap: () {}, // TODO: Notifications
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: SoftColors.textMain.withValues(alpha: 0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
                 ),
-                child: const Icon(
-                  Icons.notifications_none_rounded,
-                  color: SoftColors.textMain,
-                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.notifications_none_rounded,
+              color: SoftColors.textMain,
+            ),
+          ),
+        ),
+        // Removed trailing SizedBox(width: 24) to fix alignment
+      ],
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 12),
+            // Header
+            Text(
+              "Good Morning,",
+              style: GoogleFonts.outfit(
+                color: SoftColors.textSecondary,
+                fontSize: 16,
               ),
             ),
-            const SizedBox(width: 12),
-            BounceButton(
-              onTap: () => ref.read(authRepositoryProvider).signOut(),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: SoftColors.error.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.logout_rounded,
-                  color: SoftColors.error,
-                  size: 20,
-                ),
-              ),
-            ),
-            const SizedBox(width: 24),
-          ],
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Greeting Card
-                SoftCard(
-                  color: SoftColors.brandPrimary,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Good Morning,",
+            userProfileAsync.when(
+              data: (user) {
+                final name = user?.name ?? 'User';
+                final role = (user?.role.name ?? 'Employee').toUpperCase();
+
+                return Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        overflow: TextOverflow.ellipsis,
                         style: GoogleFonts.outfit(
-                          color: Colors.white70,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        user.displayName.isNotEmpty ? user.displayName : "User",
-                        style: GoogleFonts.outfit(
-                          color: Colors.white,
-                          fontSize: 24,
+                          color: SoftColors.textMain,
+                          fontSize: 28,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Stats Grid
-                GridView.count(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  childAspectRatio: 1.1,
-                  children: [
-                    if (!isEmployee)
-                      const StatsCard(
-                        title: "Today's Profit",
-                        value: "\$450.00",
-                        icon: Icons.attach_money_rounded,
-                        isPositive: true,
+                    ),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
                       ),
-                    const StatsCard(
-                      title: "Today's Sales",
-                      value: "\$1,205",
-                      icon: Icons.shopping_bag_outlined,
-                      isPositive: true,
-                    ),
-                    const StatsCard(
-                      title: "Low Stock",
-                      value: "12 Items",
-                      icon: Icons.warning_amber_rounded,
-                      isPositive: false,
-                    ),
-                    const StatsCard(
-                      title: "Pending Orders",
-                      value: "5",
-                      icon: Icons.pending_actions_rounded,
-                      isPositive: true,
+                      decoration: BoxDecoration(
+                        color: SoftColors.brandAccent.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: SoftColors.brandAccent.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Text(
+                        role,
+                        style: GoogleFonts.outfit(
+                          color: SoftColors.brandAccent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 32),
-
-                // Low Stock & Highlights
-                const LowStockList(),
-
-                const SizedBox(height: 32),
-                Text(
-                  "Weekly Highlights",
-                  style: GoogleFonts.outfit(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: SoftColors.textMain,
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: 5,
-                  separatorBuilder: (context, index) =>
-                      const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    return SoftCard(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 50,
-                            height: 50,
-                            decoration: BoxDecoration(
-                              color: SoftColors.background,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.image_not_supported_rounded,
-                              color: SoftColors.textSecondary,
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Logitech G502 Hero $index",
-                                  style: GoogleFonts.outfit(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: SoftColors.textMain,
-                                  ),
-                                ),
-                                Text(
-                                  "154 units sold",
-                                  style: GoogleFonts.outfit(
-                                    color: SoftColors.success,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            "\$12,450",
-                            style: GoogleFonts.outfit(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: SoftColors.textMain,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 80),
-              ],
+                );
+              },
+              loading: () => const SizedBox(height: 38), // Placeholder
+              error: (e, st) => const Text("Error loading profile"),
             ),
-          ),
-        );
-      },
-      loading: () => const Scaffold(
-        backgroundColor: SoftColors.background,
-        body: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, st) => Scaffold(
-        backgroundColor: SoftColors.background,
-        body: Center(child: Text("Error: $e")),
+            const SizedBox(height: 24),
+
+            // 1. Interactive Performance Card
+            // Only show for Owner/Admin
+            // 1. Interactive Performance Card
+            // Logic for data visibility is handled inside the widget
+            const Padding(
+              padding: EdgeInsets.only(bottom: 24),
+              child: DashboardPerformanceCard(),
+            ),
+
+            // 2. Intelligent Stock Alerts
+            const StockAlertSection(),
+            const SizedBox(height: 24),
+
+            // 3. Active Orders
+            const ActiveOrdersSection(),
+            const SizedBox(height: 24),
+
+            // 4. Weekly Highlights
+            const WeeklyHighlightsSection(),
+          ],
+        ),
       ),
     );
   }

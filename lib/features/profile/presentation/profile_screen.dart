@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/data/providers/auth_providers.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -53,9 +54,7 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                   child: Center(
                     child: Text(
-                      user.displayName.isNotEmpty
-                          ? user.displayName[0].toUpperCase()
-                          : '?',
+                      user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
                       style: GoogleFonts.outfit(
                         fontSize: 48,
                         fontWeight: FontWeight.bold,
@@ -68,7 +67,7 @@ class ProfileScreen extends ConsumerWidget {
 
                 // Name & Role
                 Text(
-                  user.displayName,
+                  user.name,
                   style: GoogleFonts.outfit(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -117,10 +116,23 @@ class ProfileScreen extends ConsumerWidget {
                           height: 1,
                         ),
                       ),
-                      _ProfileItem(
-                        title: "User ID",
-                        value: user.uid,
-                        icon: Icons.badge_outlined,
+                      Consumer(
+                        builder: (context, ref, _) {
+                          final staffIdAsync = ref.watch(userStaffIdProvider);
+                          return staffIdAsync.when(
+                            data: (id) => _ProfileItem(
+                              title: "User ID",
+                              value: id ?? user.uid, // Fallback to UID
+                              icon: Icons.badge_outlined,
+                            ),
+                            loading: () => const SizedBox(height: 50),
+                            error: (e, s) => _ProfileItem(
+                              title: "User ID",
+                              value: user.uid,
+                              icon: Icons.badge_outlined,
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),

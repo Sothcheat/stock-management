@@ -35,10 +35,15 @@ class Product {
   final double? discountValue;
   final DiscountType discountType;
   final List<ProductVariant> variants;
-  final int totalStock;
+  final int? manualStock; // Nullable to differentiate
   final int lowStockThreshold;
   final String? imagePath;
   final DateTime createdAt;
+
+  // Calculated Stock
+  int get totalStock => variants.isNotEmpty
+      ? variants.fold(0, (prev, v) => prev + v.stockQuantity)
+      : (manualStock ?? 0);
 
   // Calculated Price
   double get finalPrice {
@@ -49,6 +54,8 @@ class Product {
       return (price * (1 - discountValue! / 100)).clamp(0, double.infinity);
     }
   }
+
+  bool get hasDiscount => discountValue != null && discountValue! > 0;
 
   const Product({
     required this.id,
@@ -61,8 +68,8 @@ class Product {
     this.discountValue,
     this.discountType = DiscountType.fixed,
     required this.variants,
-    required this.totalStock,
-    this.lowStockThreshold = 10,
+    this.manualStock,
+    this.lowStockThreshold = 5,
     this.imagePath,
     required this.createdAt,
   });
@@ -76,7 +83,8 @@ class Product {
     price: 0,
     costPrice: 0,
     variants: [],
-    totalStock: 0,
+    manualStock: 0,
+    lowStockThreshold: 5,
     createdAt: DateTime.now(),
   );
 
@@ -98,10 +106,10 @@ class Product {
       variants: (data['variants'] as List<dynamic>? ?? [])
           .map((v) => ProductVariant.fromMap(v))
           .toList(),
-      totalStock: (data['totalStock'] ?? 0).toInt(),
-      lowStockThreshold: (data['lowStockThreshold'] ?? 10).toInt(),
+      manualStock: (data['manualStock'] ?? data['totalStock'] ?? 0).toInt(),
+      lowStockThreshold: (data['lowStockThreshold'] ?? 5).toInt(),
       imagePath: data['imagePath'],
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -116,7 +124,8 @@ class Product {
       'discountValue': discountValue,
       'discountType': discountType.name,
       'variants': variants.map((v) => v.toMap()).toList(),
-      'totalStock': totalStock,
+      'manualStock': manualStock,
+      'totalStock': totalStock, // Still save calculated total for queries
       'lowStockThreshold': lowStockThreshold,
       'imagePath': imagePath,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -134,7 +143,7 @@ class Product {
     double? discountValue,
     DiscountType? discountType,
     List<ProductVariant>? variants,
-    int? totalStock,
+    int? manualStock,
     int? lowStockThreshold,
     String? imagePath,
     DateTime? createdAt,
@@ -150,7 +159,7 @@ class Product {
       discountValue: discountValue ?? this.discountValue,
       discountType: discountType ?? this.discountType,
       variants: variants ?? this.variants,
-      totalStock: totalStock ?? this.totalStock,
+      manualStock: manualStock ?? this.manualStock,
       lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
       imagePath: imagePath ?? this.imagePath,
       createdAt: createdAt ?? this.createdAt,

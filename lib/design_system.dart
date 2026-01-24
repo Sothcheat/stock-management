@@ -36,6 +36,9 @@ class SoftColors {
   // Constants
   static const double cardRadius = 24.0;
   static const Color bgLight = Color(0xFFF0F4F9);
+  static const Color bgSecondary = Color(0xFFEDF2F7);
+  static const Color border = Color(0xFFE2E8F0);
+  static const Color brandAccent = Color(0xFF5E81AC); // Complementary blue/grey
 }
 
 /// **SoftScaffold**

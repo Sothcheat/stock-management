@@ -18,7 +18,7 @@ class OrderCustomer {
   final String primaryPhone;
   final String? secondaryPhone;
   final String? telegramHandle;
-  final String? note; // Added note field
+  final String? note;
 
   const OrderCustomer({
     required this.name,
@@ -49,23 +49,57 @@ class OrderCustomer {
   }
 }
 
+class OrderLogistics {
+  final double deliveryFeeCharged; // Revenue
+  final double? actualDeliveryCost; // Expense
+  final String deliveryType; // e.g., 'Grab', 'Manual', 'Free'
+
+  const OrderLogistics({
+    this.deliveryFeeCharged = 0.0,
+    this.actualDeliveryCost,
+    this.deliveryType = 'Standard',
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'deliveryFeeCharged': deliveryFeeCharged,
+      'actualDeliveryCost': actualDeliveryCost,
+      'deliveryType': deliveryType,
+    };
+  }
+
+  factory OrderLogistics.fromMap(Map<String, dynamic> map) {
+    return OrderLogistics(
+      deliveryFeeCharged: (map['deliveryFeeCharged'] ?? 0).toDouble(),
+      actualDeliveryCost: map['actualDeliveryCost']?.toDouble(),
+      deliveryType: map['deliveryType'] ?? 'Standard',
+    );
+  }
+}
+
 class OrderItem {
   final String productId;
   final String? variantId;
   final String variantName;
-  final double priceAtSale;
-  final double costPriceAtSale; // Added for profit calculation
-  final int quantity;
   final String name;
+  final int quantity;
+
+  // Financial Snapshots
+  final double priceAtSale;
+  final double discountAtSale;
+  final double costPriceAtSale;
+  final double shipmentCostAtSale;
 
   const OrderItem({
     required this.productId,
     this.variantId,
     required this.variantName,
-    required this.priceAtSale,
-    this.costPriceAtSale = 0.0,
-    required this.quantity,
     required this.name,
+    required this.quantity,
+    required this.priceAtSale,
+    this.discountAtSale = 0.0,
+    this.costPriceAtSale = 0.0,
+    this.shipmentCostAtSale = 0.0,
   });
 
   Map<String, dynamic> toMap() {
@@ -73,10 +107,12 @@ class OrderItem {
       'productId': productId,
       'variantId': variantId,
       'variantName': variantName,
-      'priceAtSale': priceAtSale,
-      'costPriceAtSale': costPriceAtSale,
-      'quantity': quantity,
       'name': name,
+      'quantity': quantity,
+      'priceAtSale': priceAtSale,
+      'discountAtSale': discountAtSale,
+      'costPriceAtSale': costPriceAtSale,
+      'shipmentCostAtSale': shipmentCostAtSale,
     };
   }
 
@@ -85,25 +121,34 @@ class OrderItem {
       productId: map['productId'] ?? '',
       variantId: map['variantId'],
       variantName: map['variantName'] ?? '',
-      priceAtSale: (map['priceAtSale'] ?? 0).toDouble(),
-      costPriceAtSale: (map['costPriceAtSale'] ?? 0).toDouble(),
-      quantity: (map['quantity'] ?? 0).toInt(),
       name: map['name'] ?? 'Product',
+      quantity: (map['quantity'] ?? 0).toInt(),
+      priceAtSale: (map['priceAtSale'] ?? 0).toDouble(),
+      discountAtSale: (map['discountAtSale'] ?? 0).toDouble(),
+      costPriceAtSale: (map['costPriceAtSale'] ?? 0).toDouble(),
+      shipmentCostAtSale: (map['shipmentCostAtSale'] ?? 0).toDouble(),
     );
   }
 
-  // Helper to create copy with cost price
-  OrderItem copyWith({double? costPriceAtSale}) {
-    return OrderItem(
-      productId: productId,
-      variantId: variantId,
-      variantName: variantName,
-      priceAtSale: priceAtSale,
-      costPriceAtSale: costPriceAtSale ?? this.costPriceAtSale,
-      quantity: quantity,
-      name: name,
-    );
-  }
+  // Helper getters
+  double get totalRevenue =>
+      priceAtSale * quantity; // priceAtSale implies final price after discount?
+  // User said "priceAtSale, discountAtSale".
+  // Usually priceAtSale is the LIST price or the FINAL price?
+  // Let's assume priceAtSale is the Unit Price (Pre-discount) or Post-discount?
+  // "priceAtSale, discountAtSale". If both exist, likely Price is Base, Discount is subtraction.
+  // Formula: (priceAtSale - discountAtSale) * quantity?
+  // Or is priceAtSale the final price?
+  // User Prompt: "copy... priceAtSale, discountAtSale".
+  // Let's assume net unit price = priceAtSale. (If discount is stored just for record).
+  // BUT logic says: `totalRevenue: (sum of item prices * qty) + deliveryFee`.
+  // `totalExpense: (sum of (costPrice + shipmentCost) * qty) ... + discounts`.
+  // Wait, "totalExpense... + discounts"?
+  // If discount is considered an expense (Contra-revenue), then Revenue = List Price * Qty.
+  // Net Profit = Revenue - Expense (which includes discount).
+  // Correct.
+
+  double get totalCost => (costPriceAtSale + shipmentCostAtSale) * quantity;
 }
 
 class OrderModel {
@@ -111,8 +156,9 @@ class OrderModel {
   final OrderCustomer customer;
   final String deliveryAddress;
   final List<OrderItem> items;
-  final double totalAmount;
+  final OrderLogistics logistics;
   final OrderStatus status;
+  final String? note;
   final String createdBy;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -122,12 +168,60 @@ class OrderModel {
     required this.customer,
     required this.deliveryAddress,
     required this.items,
+    this.logistics = const OrderLogistics(),
     required this.totalAmount,
     this.status = OrderStatus.prepping,
+    this.note,
     required this.createdBy,
     required this.createdAt,
     required this.updatedAt,
   });
+
+  // --- Financial Getters ---
+
+  double get totalRevenue {
+    // Sum of item prices * qty + delivery fee
+    final itemsRevenue = items.fold(
+      0.0,
+      (total, item) => total + (item.priceAtSale * item.quantity),
+    );
+    return itemsRevenue + logistics.deliveryFeeCharged;
+  }
+
+  double get totalExpense {
+    // Sum of (cost + shipment) * qty + actualDeliveryCost + discounts
+    final itemsCost = items.fold(0.0, (total, item) {
+      final itemCost =
+          (item.costPriceAtSale + item.shipmentCostAtSale) * item.quantity;
+      final itemDiscount = item.discountAtSale * item.quantity;
+      return total + itemCost + itemDiscount;
+    });
+    return itemsCost + (logistics.actualDeliveryCost ?? 0.0);
+  }
+
+  double get netProfit => totalRevenue - totalExpense;
+
+  // Wait, if totalRevenue uses priceAtSale (List Price), then the actual "Amount To Pay" by customer is Revenue - Discounts.
+  // Typically `totalAmount` in OrderModel represents what the customer pays.
+  // If `priceAtSale` is the List Price, then `totalAmount` = (price - discount) * qty + delivery.
+
+  // Let's verify `totalAmount` definition in original file.
+  // original `totalAmount` field existed as a plain double.
+  // I should probably keep `totalAmount` as a field or computed getter that represents the Final Value.
+  // The user asked for `totalRevenue`, `totalExpense`, `netProfit`.
+  // I will make `totalAmount` a computed getter or simple field for backward compatibility?
+  // The original had `final double totalAmount;`.
+  // I will keep it as a field for Firestore persistence if needed, but setters/getters are better for consistency.
+  // However, `fromFirestore` reads keys.
+  // I will calculate it in `toFirestore` or let it be stored.
+  // Storing it is safer for history if get logic changes.
+  // But for this refactor, I'll calculate it in the constructor or factory?
+  // Let's keep it as a stored field to avoid breaking changes if logic drifts, BUT update it in copyWith/constructor.
+  // Actually, I'll keep `totalAmount` as a stored field to match existing Firestore data structure, but commonly it should match the math.
+
+  // Revised approach: I will keep `totalAmount` as a parameter to ensure we don't lose data, but the getters above are dynamic.
+
+  final double totalAmount; // Stored total (Customer Paid)
 
   factory OrderModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
@@ -138,11 +232,13 @@ class OrderModel {
       items: (data['items'] as List<dynamic>? ?? [])
           .map((i) => OrderItem.fromMap(i))
           .toList(),
+      logistics: OrderLogistics.fromMap(data['logistics'] ?? {}),
       totalAmount: (data['totalAmount'] ?? 0).toDouble(),
       status: OrderStatus.fromString(data['status'] ?? 'prepping'),
+      note: data['note'],
       createdBy: data['createdBy'] ?? '',
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp).toDate(),
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -151,22 +247,36 @@ class OrderModel {
       'customer': customer.toMap(),
       'deliveryAddress': deliveryAddress,
       'items': items.map((i) => i.toMap()).toList(),
+      'logistics': logistics.toMap(),
       'totalAmount': totalAmount,
       'status': status.name,
+      'note': note,
       'createdBy': createdBy,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
   }
 
-  OrderModel copyWith({OrderStatus? status, DateTime? updatedAt}) {
+  OrderModel copyWith({
+    String? id,
+    OrderCustomer? customer,
+    String? deliveryAddress,
+    List<OrderItem>? items,
+    OrderLogistics? logistics,
+    double? totalAmount,
+    OrderStatus? status,
+    String? note,
+    DateTime? updatedAt,
+  }) {
     return OrderModel(
-      id: id,
-      customer: customer,
-      deliveryAddress: deliveryAddress,
-      items: items,
-      totalAmount: totalAmount,
+      id: id ?? this.id,
+      customer: customer ?? this.customer,
+      deliveryAddress: deliveryAddress ?? this.deliveryAddress,
+      items: items ?? this.items,
+      logistics: logistics ?? this.logistics,
+      totalAmount: totalAmount ?? this.totalAmount,
       status: status ?? this.status,
+      note: note ?? this.note,
       createdBy: createdBy,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
