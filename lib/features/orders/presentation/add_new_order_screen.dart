@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../design_system.dart';
+import '../../inventory/data/inventory_repository.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../orders/data/firebase_orders_repository.dart';
 import '../../orders/domain/order.dart';
@@ -61,6 +63,7 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
   double get _totalAmount => _subtotal + _deliveryFee;
 
   void _setDeliveryOption(String type, double fee) {
+    HapticFeedback.lightImpact();
     setState(() {
       _deliveryType = type;
       _deliveryFee = fee;
@@ -144,38 +147,82 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
     }
   }
 
-  Widget _buildDeliveryOption(String label, String type, double fee) {
-    final isSelected =
-        _deliveryType == type && (type != 'Manual' || _deliveryFee == fee);
-    // Logic for Manual selection is broader, but for Preset chips
-    // Wait, Manual is a category.
-    // Let's modify:
-    // Types: 'Free', 'Preset', 'Manual'.
-    // If user clicks a preset, type='Preset'.
-    // If user types in box, type='Manual'.
+  void _showEditQuantitySheet(OrderItem item) {
+    int qty = item.quantity;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: SoftColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return _EditQuantitySheet(
+          item: item,
+          onSave: (newQty) {
+            setState(() {
+              final index = _items.indexOf(item);
+              if (index != -1) {
+                // Check if qty 0? User might want to delete.
+                if (newQty <= 0) {
+                  _items.removeAt(index);
+                } else {
+                  _items[index] = item.copyWith(quantity: newQty);
+                }
+              }
+            });
+            Navigator.pop(context);
+          },
+        );
+      },
+    );
+  }
 
-    final isActive = _deliveryType == type;
+  Widget _buildDeliveryOption(String label, String type, double fee) {
+    // Strict Match: Type MUST match AND Fee MUST match
+    final isSelected = _deliveryType == type && _deliveryFee == fee;
 
     return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: ChoiceChip(
-        label: Text(label),
-        selected: isActive,
-        onSelected: (selected) {
-          if (selected) {
-            _setDeliveryOption(type, fee);
-          }
-        },
-        selectedColor: SoftColors.brandPrimary.withOpacity(0.1),
-        labelStyle: GoogleFonts.outfit(
-          color: isActive ? SoftColors.brandPrimary : SoftColors.textSecondary,
-          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+      padding: const EdgeInsets.only(right: 12),
+      child: InkWell(
+        onTap: () => _setDeliveryOption(type, fee),
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? SoftColors.brandPrimary.withValues(alpha: 0.1)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isSelected ? SoftColors.brandPrimary : SoftColors.border,
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isSelected) ...[
+                const Icon(
+                  Icons.check_circle_rounded,
+                  size: 16,
+                  color: SoftColors.brandPrimary,
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                label,
+                style: GoogleFonts.outfit(
+                  color: isSelected
+                      ? SoftColors.brandPrimary
+                      : SoftColors.textSecondary,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
         ),
-        backgroundColor: Colors.white,
-        side: BorderSide(
-          color: isActive ? SoftColors.brandPrimary : SoftColors.border,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
@@ -195,7 +242,6 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ... (Prev Code: Customer Details) ...
                     Text(
                       "Customer Details",
                       style: GoogleFonts.outfit(
@@ -242,7 +288,9 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             prefixIcon: Icons.location_on_outlined,
                             activePrefixIcon: Icons.location_on,
                             showClearButton: true,
+                            keyboardType: TextInputType.text,
                             maxLines: 2,
+                            textInputAction: TextInputAction.done,
                             validator: (v) =>
                                 v?.isEmpty == true ? 'Required' : null,
                           ),
@@ -254,7 +302,9 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             prefixIcon: Icons.note_outlined,
                             activePrefixIcon: Icons.note,
                             showClearButton: true,
+                            keyboardType: TextInputType.text,
                             maxLines: 2,
+                            textInputAction: TextInputAction.done,
                           ),
                         ],
                       ),
@@ -275,12 +325,14 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                         ),
                         BounceButton(
                           onTap: () async {
-                            final result = await context.push<OrderItem>(
+                            final result = await context.push<List<OrderItem>>(
                               '/orders/product-selection',
+                              extra: _items,
                             );
                             if (result != null) {
                               setState(() {
-                                _items.add(result);
+                                _items.clear();
+                                _items.addAll(result);
                               });
                             }
                           },
@@ -353,90 +405,43 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                         ),
                       )
                     else
-                      ListView.builder(
+                      ListView.separated(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: _items.length,
+                        separatorBuilder: (c, i) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
                           final item = _items[index];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: SoftCard(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      color: SoftColors.brandPrimary.withValues(
-                                        alpha: 0.1,
-                                      ),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        "${item.quantity}x",
-                                        style: GoogleFonts.outfit(
-                                          fontWeight: FontWeight.bold,
-                                          color: SoftColors.brandPrimary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          item.name,
-                                          style: GoogleFonts.outfit(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            color: SoftColors.textMain,
-                                          ),
-                                        ),
-                                        Text(
-                                          item.variantName,
-                                          style: GoogleFonts.outfit(
-                                            color: SoftColors.textSecondary,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        "\$${(item.priceAtSale * item.quantity).toStringAsFixed(2)}",
-                                        style: GoogleFonts.outfit(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                          color: SoftColors.textMain,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      BounceButton(
-                                        onTap: () {
-                                          setState(() {
-                                            _items.removeAt(index);
-                                          });
-                                        },
-                                        child: Icon(
-                                          Icons.delete_outline_rounded,
-                                          size: 20,
-                                          color: SoftColors.error.withValues(
-                                            alpha: 0.7,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                          return Dismissible(
+                            key: ValueKey(
+                              "order_item_${item.productId}_${item.variantId}_$index",
+                            ),
+                            direction: DismissDirection.endToStart,
+                            background: Container(
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 24),
+                              decoration: BoxDecoration(
+                                color: SoftColors.error.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(
+                                  SoftColors.cardRadius,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.delete_outline,
+                                color: SoftColors.error,
+                              ),
+                            ),
+                            onDismissed: (_) {
+                              setState(() {
+                                _items.removeAt(index);
+                              });
+                              HapticFeedback.mediumImpact();
+                            },
+                            child: BounceButton(
+                              onTap: () => _showEditQuantitySheet(item),
+                              child: SoftCard(
+                                padding: const EdgeInsets.all(12),
+                                child: _OrderItemRow(item: item),
                               ),
                             ),
                           );
@@ -471,10 +476,16 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                             labelText: "Manual Fee / Custom",
                             hintText: "Enter amount",
                             prefixIcon: Icons.delivery_dining_outlined,
+                            showClearButton: true,
                             activePrefixIcon: Icons.delivery_dining,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d*\.?\d*$'),
+                              ),
+                            ],
                             onChanged: (val) {
                               // If user types, switch to manual mode
                               setState(() {
@@ -587,6 +598,211 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrderItemRow extends ConsumerWidget {
+  final OrderItem item;
+  const _OrderItemRow({required this.item});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Watch precise product for image
+    final productMap = ref.watch(productsMapByIdProvider).valueOrNull;
+    final product = productMap?[item.productId];
+    final imagePath = product?.imagePath;
+
+    return Row(
+      children: [
+        // Thumbnail
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: imagePath != null
+              ? CachedNetworkImage(
+                  imageUrl: imagePath,
+                  fit: BoxFit.cover,
+                  errorWidget: (context, url, error) => const Center(
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      size: 20,
+                      color: SoftColors.textSecondary,
+                    ),
+                  ),
+                )
+              : const Center(
+                  child: Icon(
+                    Icons.inventory_2_outlined,
+                    size: 24,
+                    color: SoftColors.brandPrimary,
+                  ),
+                ),
+        ),
+        const SizedBox(width: 12),
+        // Details
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                item.name,
+                style: GoogleFonts.outfit(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: SoftColors.textMain,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+
+              Row(
+                children: [
+                  Text(
+                    "\$${item.priceAtSale.toStringAsFixed(2)}",
+                    style: GoogleFonts.outfit(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: SoftColors.textMain,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    "x${item.quantity}",
+                    style: GoogleFonts.outfit(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: SoftColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              if (item.variantName != 'Standard')
+                Text(
+                  item.variantName,
+                  style: GoogleFonts.outfit(
+                    fontSize: 12,
+                    color: SoftColors.textSecondary,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EditQuantitySheet extends StatefulWidget {
+  final OrderItem item;
+  final ValueChanged<int> onSave;
+  const _EditQuantitySheet({required this.item, required this.onSave});
+  @override
+  State<_EditQuantitySheet> createState() => _EditQuantitySheetState();
+}
+
+class _EditQuantitySheetState extends State<_EditQuantitySheet> {
+  late int _qty;
+  @override
+  void initState() {
+    super.initState();
+    _qty = widget.item.quantity;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        24,
+        24,
+        24,
+        MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            "Update Quantity",
+            style: GoogleFonts.outfit(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.item.name,
+            style: GoogleFonts.outfit(
+              color: SoftColors.textSecondary,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              BounceButton(
+                onTap: _qty > 0
+                    ? () {
+                        HapticFeedback.lightImpact();
+                        setState(() => _qty--);
+                      }
+                    : () {},
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.remove, color: SoftColors.textMain),
+                ),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(
+                  "$_qty",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.outfit(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              BounceButton(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  setState(() => _qty++);
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.add, color: SoftColors.brandPrimary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          SoftButton(
+            label: _qty == 0 ? "Remove Item" : "Update",
+            isLoading: false,
+            icon: _qty == 0 ? Icons.delete_outline : Icons.check,
+            backgroundColor: _qty == 0
+                ? SoftColors.error
+                : SoftColors.brandPrimary,
+            onTap: () {
+              HapticFeedback.mediumImpact();
+              widget.onSave(_qty);
+            },
           ),
         ],
       ),

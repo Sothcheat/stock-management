@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import '../../../../design_system.dart';
 import '../../orders/data/firebase_orders_repository.dart';
 import '../../orders/domain/order.dart';
 import '../../auth/data/providers/auth_providers.dart';
 import '../../auth/domain/user_model.dart';
+import 'providers/order_history_controller.dart';
 
 class OrderDetailScreen extends ConsumerWidget {
   final OrderModel order;
@@ -14,7 +16,8 @@ class OrderDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final ordersAsync = ref.watch(ordersStreamProvider);
+    // Fix: Use specific order stream to avoid "Order not found" when order is not in Active Stream
+    final orderAsync = ref.watch(orderStreamProvider(order.id));
     final userProfileAsync = ref.watch(currentUserProfileProvider);
 
     // Security: Wait for user profile to load to prevent showing Owner data to Employees
@@ -25,20 +28,12 @@ class OrderDetailScreen extends ConsumerWidget {
     final user = userProfileAsync.value;
     final isEmployee = user?.role == UserRole.employee;
 
-    return ordersAsync.when(
+    return orderAsync.when(
       loading: () =>
           const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (e, s) => Scaffold(body: Center(child: Text("Error: $e"))),
-      data: (orders) {
-        // Find updated version of this order
-        final currentOrder = orders.firstWhere(
-          (o) => o.id == order.id,
-          orElse: () => order, // Fallback (e.g. if deleted)
-        );
-
-        // If order was deleted (and we are still here), show a message or pop
-        final exists = orders.any((o) => o.id == order.id);
-        if (!exists) {
+      data: (currentOrder) {
+        if (currentOrder == null) {
           return const Scaffold(
             body: Center(child: Text("Order not found (Deleted)")),
           );
@@ -92,6 +87,12 @@ class OrderDetailScreen extends ConsumerWidget {
                     await ref
                         .read(ordersRepositoryProvider)
                         .deleteOrder(currentOrder);
+
+                    // Update Local History State immediately if it exists
+                    ref
+                        .read(orderHistoryProvider.notifier)
+                        .removeOrderLocally(currentOrder.id);
+
                     if (context.mounted) context.pop();
                   }
                 },
@@ -117,50 +118,72 @@ class OrderDetailScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Header (Status & ID)
+                // Header (Status & ID) - Matching New Card Style
                 SoftCard(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            "Order ID",
-                            style: GoogleFonts.outfit(
-                              color: SoftColors.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
                           Text(
                             "#${currentOrder.id.substring(0, 5).toUpperCase()}",
                             style: GoogleFonts.outfit(
                               fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              color: SoftColors.textMain,
+                              fontSize: 16,
+                              color: SoftColors.brandPrimary,
+                            ),
+                          ),
+                          _StatusBadge(status: currentOrder.status),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        currentOrder.customer.name,
+                        style: GoogleFonts.outfit(
+                          color: SoftColors.textMain,
+                          fontSize: 24, // Large
+                          fontWeight: FontWeight.w800, // Extra Bold
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.access_time_rounded,
+                            size: 16,
+                            color: SoftColors.textSecondary,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            DateFormat(
+                              'MMMM dd, yyyy • h:mm a',
+                            ).format(currentOrder.createdAt),
+                            style: GoogleFonts.outfit(
+                              color: SoftColors.textSecondary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
                       ),
-                      _StatusBadge(status: currentOrder.status),
                     ],
                   ),
                 ),
                 const SizedBox(height: 24),
 
-                // Customer Info
-                _SectionHeader("Customer Info"),
+                // Customer Info (Reduced to Contact Details since Name is in Header now)
+                _SectionHeader("Contact Details"),
                 SoftCard(
                   child: Column(
                     children: [
-                      _InfoRow(
-                        Icons.person_outline_rounded,
-                        currentOrder.customer.name,
-                      ),
-                      const SizedBox(height: 12),
+                      // Map Name Row removed from here since it is in header
                       _InfoRow(
                         Icons.phone_outlined,
                         currentOrder.customer.primaryPhone,
                       ),
+
                       if (currentOrder.customer.secondaryPhone?.isNotEmpty ==
                           true) ...[
                         const SizedBox(height: 12),
@@ -553,6 +576,11 @@ class OrderDetailScreen extends ConsumerWidget {
                         await ref
                             .read(ordersRepositoryProvider)
                             .updateOrder(updatedOrder);
+
+                        // Sync with History List
+                        ref
+                            .read(orderHistoryProvider.notifier)
+                            .updateOrderLocally(updatedOrder);
                       }
                     },
                   ),
@@ -564,13 +592,23 @@ class OrderDetailScreen extends ConsumerWidget {
                     icon: Icons.check_circle_outline_rounded,
                     backgroundColor: SoftColors.success,
                     textColor: Colors.white,
-                    onTap: () {
-                      ref
+                    onTap: () async {
+                      await ref
                           .read(ordersRepositoryProvider)
                           .updateOrderStatus(
                             currentOrder.id,
                             OrderStatus.completed,
                           );
+
+                      // Sync with History List
+                      // (We need to construct the updated order object locally or fetch it,
+                      // but since updateOrderStatus relies on ID, let's create a local copy for the UI)
+                      final updatedOrder = currentOrder.copyWith(
+                        status: OrderStatus.completed,
+                      );
+                      ref
+                          .read(orderHistoryProvider.notifier)
+                          .updateOrderLocally(updatedOrder);
                     },
                   ),
 
@@ -640,6 +678,9 @@ class _StatusBadge extends StatelessWidget {
         break;
       case OrderStatus.completed:
         color = SoftColors.success;
+        break;
+      case OrderStatus.cancelled:
+        color = SoftColors.error;
         break;
     }
 

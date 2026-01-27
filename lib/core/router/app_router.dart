@@ -115,7 +115,9 @@ final routerProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'product-selection',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) => const ProductSelectionScreen(),
+                    builder: (context, state) => ProductSelectionScreen(
+                      existingItems: state.extra as List<OrderItem>?,
+                    ),
                   ),
                   GoRoute(
                     path: 'detail',

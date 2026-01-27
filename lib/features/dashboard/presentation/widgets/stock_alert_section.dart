@@ -87,14 +87,27 @@ class StockAlertSection extends ConsumerWidget {
         ),
 
         // Vertical List
-        ...displayAlerts.map((product) {
-          final isOutOfStock = product.totalStock == 0;
+        ...displayAlerts.map((item) {
+          final product = item.product;
+          final variant = item.variant;
+          final isOutOfStock = item.isOutOfStock;
           final color = isOutOfStock ? SoftColors.error : SoftColors.warning;
+
+          String subtitle = isOutOfStock
+              ? "Restock immediately"
+              : "Low stock warning";
+          if (variant != null) {
+            // "Black • Low stock warning"
+            subtitle = "${variant.name} • $subtitle";
+          }
 
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: BounceButton(
-              onTap: () => context.go('/inventory/detail', extra: product),
+              onTap: () => context.push(
+                '/inventory/detail',
+                extra: product,
+              ), // TODO: Navigate to specific variant?
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -121,9 +134,10 @@ class StockAlertSection extends ConsumerWidget {
                         width: 56,
                         height: 56,
                         color: SoftColors.bgSecondary,
-                        child: product.imagePath != null
+                        child: (variant?.imagePath ?? product.imagePath) != null
                             ? CachedNetworkImage(
-                                imageUrl: product.imagePath!,
+                                imageUrl:
+                                    (variant?.imagePath ?? product.imagePath)!,
                                 fit: BoxFit.cover,
                               )
                             : Icon(
@@ -154,12 +168,15 @@ class StockAlertSection extends ConsumerWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            isOutOfStock
-                                ? "Restock immediately"
-                                : "Low stock warning",
+                            subtitle,
                             style: GoogleFonts.outfit(
                               fontSize: 12,
-                              color: SoftColors.textSecondary,
+                              fontWeight: FontWeight.w500,
+                              color: variant != null
+                                  ? SoftColors.textSecondary
+                                  : (isOutOfStock
+                                        ? SoftColors.error
+                                        : SoftColors.warning),
                             ),
                           ),
                         ],
@@ -179,7 +196,7 @@ class StockAlertSection extends ConsumerWidget {
                       child: Column(
                         children: [
                           Text(
-                            isOutOfStock ? "0" : "${product.totalStock}",
+                            isOutOfStock ? "0" : "${item.currentStock}",
                             style: GoogleFonts.outfit(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -195,6 +212,14 @@ class StockAlertSection extends ConsumerWidget {
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        size: 24,
+                        color: SoftColors.textSecondary.withValues(alpha: 0.7),
                       ),
                     ),
                   ],

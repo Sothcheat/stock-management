@@ -4,15 +4,22 @@ class ProductVariant {
   final String id;
   final String name;
   final int stockQuantity;
+  final String? imagePath;
 
   const ProductVariant({
     required this.id,
     required this.name,
     required this.stockQuantity,
+    this.imagePath,
   });
 
   Map<String, dynamic> toMap() {
-    return {'id': id, 'name': name, 'stockQuantity': stockQuantity};
+    return {
+      'id': id,
+      'name': name,
+      'stockQuantity': stockQuantity,
+      'imagePath': imagePath,
+    };
   }
 
   factory ProductVariant.fromMap(Map<String, dynamic> map) {
@@ -20,6 +27,7 @@ class ProductVariant {
       id: map['id'] ?? '',
       name: map['name'] ?? '',
       stockQuantity: map['stockQuantity']?.toInt() ?? 0,
+      imagePath: map['imagePath'],
     );
   }
 }

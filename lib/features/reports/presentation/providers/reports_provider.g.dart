@@ -6,7 +6,7 @@ part of 'reports_provider.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$weeklyReportHash() => r'c8eb82e05cf3378ce969524bca37f126a4c28e4d';
+String _$weeklyReportHash() => r'92bf1eb2f0a48b401ae8921920f9ebf2175afaf4';
 
 /// Copied from Dart SDK
 class _SystemHash {
@@ -147,7 +147,7 @@ class _WeeklyReportProviderElement
   DateTime get targetDate => (origin as WeeklyReportProvider).targetDate;
 }
 
-String _$monthlyReportHash() => r'097949460e9a2bc64b8965e85f8eb8b18c4c6037';
+String _$monthlyReportHash() => r'65be7f6c7044c44d3d1c78f7c5923948ae2e5533';
 
 /// See also [monthlyReport].
 @ProviderFor(monthlyReport)
@@ -267,7 +267,7 @@ class _MonthlyReportProviderElement
   DateTime get targetDate => (origin as MonthlyReportProvider).targetDate;
 }
 
-String _$yearlyReportHash() => r'4ec1bdf441b6327d3f32e956678026439dcc9a0f';
+String _$yearlyReportHash() => r'1bc4e3401e818b2531be71baf505f5b348a5630c';
 
 /// See also [yearlyReport].
 @ProviderFor(yearlyReport)
@@ -387,7 +387,7 @@ class _YearlyReportProviderElement
   DateTime get targetDate => (origin as YearlyReportProvider).targetDate;
 }
 
-String _$allTimeReportHash() => r'005ded87465141f1212dc7abce87c78f798855e2';
+String _$allTimeReportHash() => r'560660eb1b32b5aaecc38f8b10bd91c9d7ea55f8';
 
 /// See also [allTimeReport].
 @ProviderFor(allTimeReport)

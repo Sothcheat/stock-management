@@ -15,6 +15,19 @@ final dashboardViewTypeProvider = StateProvider<DashboardViewType>((ref) {
   return DashboardViewType.today;
 });
 
+// A wrapper to handle stock items, either product-level or variant-level
+class StockAlertItem {
+  final Product product;
+  final ProductVariant? variant;
+
+  StockAlertItem(this.product, [this.variant]);
+
+  int get currentStock =>
+      variant != null ? variant!.stockQuantity : product.totalStock;
+
+  bool get isOutOfStock => currentStock <= 0;
+}
+
 // 2. Metrics Logic
 class DashboardMetrics {
   final double profit;
@@ -105,23 +118,38 @@ final dailySummariesStreamProvider = StreamProvider<List<DailySummary>>((ref) {
   return ref.watch(reportsRepositoryProvider).watchSummaries(limit: 7);
 });
 
-// 3. Stock Alerts (Priority Sorted) -> UNCHANGED
-final stockAlertsProvider = Provider<List<Product>>((ref) {
+// 3. Stock Alerts (Priority Sorted) -> UPDATED
+final stockAlertsProvider = Provider<List<StockAlertItem>>((ref) {
   final productsAsync = ref.watch(productsProvider);
 
   return productsAsync.when(
     data: (products) {
-      final lowStock = products
-          .where((p) => p.totalStock <= p.lowStockThreshold)
-          .toList();
+      final List<StockAlertItem> alerts = [];
 
-      lowStock.sort((a, b) {
-        if (a.totalStock == 0 && b.totalStock != 0) return -1;
-        if (a.totalStock != 0 && b.totalStock == 0) return 1;
-        return a.totalStock.compareTo(b.totalStock);
+      for (var p in products) {
+        if (p.variants.isNotEmpty) {
+          // Check each variant
+          for (var v in p.variants) {
+            if (v.stockQuantity <= p.lowStockThreshold) {
+              alerts.add(StockAlertItem(p, v));
+            }
+          }
+        } else {
+          // Flatten check
+          if (p.totalStock <= p.lowStockThreshold) {
+            alerts.add(StockAlertItem(p));
+          }
+        }
+      }
+
+      // Sort: Out of stock first, then ascending stock
+      alerts.sort((a, b) {
+        if (a.isOutOfStock && !b.isOutOfStock) return -1;
+        if (!a.isOutOfStock && b.isOutOfStock) return 1;
+        return a.currentStock.compareTo(b.currentStock);
       });
 
-      return lowStock;
+      return alerts;
     },
     loading: () => [],
     error: (e, s) => [],
@@ -152,19 +180,15 @@ final activeOrdersProvider = Provider<List<OrderModel>>((ref) {
 class ProductSalesStat {
   final String productName;
   final int quantitySold;
-  final double
-  totalRevenue; // Not strictly tracked in Rankings (only qty), but we can omit or track separately.
-  // The DailySummary `productRanking` is Map<String, int> (Qty only).
-  // User req: "productRanking": {"chair": 5}.
-  // We don't have revenue per product stored in summary.
-  // So for `WeeklyHighlights`, we might only show Quantity.
-  // Or we modify ProductSalesStat to remove revenue?
-  // UI usually shows "X units sold".
-  // Let's modify `ProductSalesStat` to default revenue to 0 if unknown, or just omit.
-  // "Update... using the daily_summaries document".
-  // Since summary only has Qty, I will use Qty.
+  final double totalRevenue;
+  final Product product; // Full product details
 
-  ProductSalesStat(this.productName, this.quantitySold, this.totalRevenue);
+  ProductSalesStat(
+    this.productName,
+    this.quantitySold,
+    this.totalRevenue,
+    this.product,
+  );
 }
 
 final weeklyHighlightsProvider = Provider<List<ProductSalesStat>>((ref) {
@@ -187,17 +211,19 @@ final weeklyHighlightsProvider = Provider<List<ProductSalesStat>>((ref) {
   }
 
   final list = consolidatedRanking.entries.map((e) {
-    // Find product to get current price
-    // Note: This relies on product name matching, which is how ranking is stored currently.
+    // Find product to get details
     final product = products.firstWhere(
       (p) => p.name == e.key,
       orElse: () => Product.empty(),
     );
 
-    return ProductSalesStat(e.key, e.value, e.value * product.price);
+    return ProductSalesStat(e.key, e.value, e.value * product.price, product);
   }).toList();
 
-  list.sort((a, b) => b.quantitySold.compareTo(a.quantitySold));
+  // Filter out where product is not found (empty) if desired, or keep to show legacy data
+  final validList = list.where((stat) => stat.product.id.isNotEmpty).toList();
 
-  return list.take(10).toList();
+  validList.sort((a, b) => b.quantitySold.compareTo(a.quantitySold));
+
+  return validList.take(10).toList();
 });

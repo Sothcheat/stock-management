@@ -49,6 +49,8 @@ class SoftColors {
 /// - Built-in SafeArea handling.
 class SoftScaffold extends StatelessWidget {
   final String title;
+  final Widget? titleWidget; // Added this
+  final TextStyle? titleStyle;
   final Widget body;
   final Widget? floatingActionButton;
   final Widget? bottomNavigationBar;
@@ -58,7 +60,9 @@ class SoftScaffold extends StatelessWidget {
   const SoftScaffold({
     super.key,
     required this.title,
+    this.titleWidget, // Added this
     required this.body,
+    this.titleStyle,
     this.floatingActionButton,
     this.bottomNavigationBar,
     this.actions,
@@ -105,15 +109,17 @@ class SoftScaffold extends StatelessWidget {
                     const SizedBox(width: 16),
                   ],
                   Expanded(
-                    child: Text(
-                      title,
-                      style: GoogleFonts.outfit(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: SoftColors.textMain,
-                        height: 1.1,
-                      ),
-                    ),
+                    child:
+                        titleWidget ??
+                        Text(
+                          title,
+                          style: GoogleFonts.outfit(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: SoftColors.textMain,
+                            height: 1.1,
+                          ),
+                        ),
                   ),
                   if (actions != null) ...actions!,
                 ],
@@ -198,6 +204,7 @@ class ModernInput extends StatefulWidget {
   final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
   final bool showClearButton;
+  final TextInputAction? textInputAction;
 
   const ModernInput({
     super.key,
@@ -218,6 +225,7 @@ class ModernInput extends StatefulWidget {
     this.inputFormatters,
     this.onChanged,
     this.showClearButton = false,
+    this.textInputAction,
   });
 
   @override
@@ -375,6 +383,7 @@ class _ModernInputState extends State<ModernInput> {
 class BounceButton extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final Duration duration;
   final double scaleFactor;
 
@@ -382,6 +391,7 @@ class BounceButton extends StatefulWidget {
     super.key,
     required this.child,
     required this.onTap,
+    this.onLongPress,
     this.duration = const Duration(milliseconds: 100),
     this.scaleFactor = 0.96,
   });
@@ -435,6 +445,7 @@ class _BounceButtonState extends State<BounceButton>
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
       onTapCancel: _onTapCancel,
+      onLongPress: widget.onLongPress, // Add this
       child: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {

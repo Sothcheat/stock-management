@@ -24,6 +24,20 @@ Stream<List<Product>> productsStream(Ref ref) {
   return ref.watch(inventoryRepositoryProvider).processProductsStream();
 }
 
+@riverpod
+Stream<Map<String, Product>> productsMap(Ref ref) {
+  return ref.watch(productsStreamProvider.future).asStream().map((products) {
+    return {for (var p in products) p.name: p};
+  });
+}
+
+@riverpod
+Stream<Map<String, Product>> productsMapById(Ref ref) {
+  return ref.watch(productsStreamProvider.future).asStream().map((products) {
+    return {for (var p in products) p.id: p};
+  });
+}
+
 class InventoryRepository implements CategoryRepository {
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
@@ -38,6 +52,21 @@ class InventoryRepository implements CategoryRepository {
     ) {
       return snapshot.docs.map((doc) => Product.fromFirestore(doc)).toList();
     });
+  }
+
+  Future<Product?> getProductByName(String name) async {
+    try {
+      final snapshot = await _productsRef
+          .where('name', isEqualTo: name)
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isEmpty) return null;
+      return Product.fromFirestore(snapshot.docs.first);
+    } catch (e) {
+      // Return null on error to allow UI to show placeholder
+      return null;
+    }
   }
 
   /// **Pre-Upload Optimization Pipeline**
@@ -59,13 +88,64 @@ class InventoryRepository implements CategoryRepository {
     return result != null ? File(result.path) : null;
   }
 
+  Future<List<ProductVariant>> _uploadVariantImages(
+    String productId,
+    List<ProductVariant> variants,
+  ) async {
+    final List<ProductVariant> updatedVariants = [];
+
+    for (final v in variants) {
+      // Check if imagePath is a local path (not a URL) and exists
+      if (v.imagePath != null &&
+          !v.imagePath!.startsWith('http') &&
+          !v.imagePath!.startsWith('https')) {
+        final file = File(v.imagePath!);
+        if (await file.exists()) {
+          final compressed = await _compressImage(file);
+          if (compressed != null) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            // Naming: products/{productId}/variants/{variantId}_{timestamp}.jpg
+            final ref = _storage.ref().child(
+              'products/$productId/variants/${v.id}_$timestamp.jpg',
+            );
+
+            try {
+              await ref.putFile(compressed);
+              final url = await ref.getDownloadURL();
+
+              // Update variant with URL
+              updatedVariants.add(
+                ProductVariant(
+                  id: v.id,
+                  name: v.name,
+                  stockQuantity: v.stockQuantity,
+                  imagePath: url,
+                ),
+              );
+              continue; // Successfully updated
+            } catch (e) {
+              // On upload failure, keep local path or handle error?
+              // For now, keep original to prevent data loss, but it won't be visible on other devices
+              // Or maybe set to null? Let's keep original for retry potential
+              updatedVariants.add(v);
+              continue;
+            }
+          }
+        }
+      }
+      // If no change needed or upload failed/skipped
+      updatedVariants.add(v);
+    }
+    return updatedVariants;
+  }
+
   Future<void> addProduct(Product product, File? imageFile) async {
     // 1. Generate ID first to use for Image Naming
     final docRef = _productsRef.doc();
     final productId = docRef.id;
     String? imageUrl;
 
-    // 2. Image Optimization & Upload
+    // 2. Image Optimization & Upload (Main)
     if (imageFile != null) {
       final compressedFile = await _compressImage(imageFile);
       if (compressedFile != null) {
@@ -76,25 +156,30 @@ class InventoryRepository implements CategoryRepository {
       }
     }
 
-    // 3. Prepare Hybrid Stock Data
-    // Logic: totalStock = variants.sum ?? manualStock
-    // We already have a getter in Product, but let's ensure it's saved explicitly if needed.
-    // Product.toFirestore() already handles saving 'totalStock' using the getter.
+    // 3. Variant Images Upload
+    List<ProductVariant> finalVariants = product.variants;
+    if (product.variants.isNotEmpty) {
+      finalVariants = await _uploadVariantImages(productId, product.variants);
+    }
 
     final newProduct = product.copyWith(
       id: productId, // Assign the generated ID
       imagePath: imageUrl,
+      variants: finalVariants,
       createdAt: DateTime.now(),
     );
 
     // 4. Save to Firestore
+    // Ensure manualStock is null if variants exist (enforce hybrid logic consistency)
+    // Though copyWith doesn't support setting null easily unless we handle it
+    // But Product logic usually prefers variants sum.
     await docRef.set(newProduct.toFirestore());
   }
 
   Future<void> updateProduct(Product product, File? newImageFile) async {
     String? imageUrl = product.imagePath;
 
-    // 1. Handle New Image
+    // 1. Handle New Image (Main)
     if (newImageFile != null) {
       final compressedFile = await _compressImage(newImageFile);
       if (compressedFile != null) {
@@ -105,11 +190,20 @@ class InventoryRepository implements CategoryRepository {
       }
     }
 
-    // 2. Update Firestore
-    // Note: product.totalStock getter will ensure the correct value is used in toFirestore()
+    // 2. Variant Images Upload
+    List<ProductVariant> finalVariants = product.variants;
+    if (product.variants.isNotEmpty) {
+      finalVariants = await _uploadVariantImages(product.id, product.variants);
+    }
+
+    // 3. Update Firestore
     await _productsRef
         .doc(product.id)
-        .update(product.copyWith(imagePath: imageUrl).toFirestore());
+        .update(
+          product
+              .copyWith(imagePath: imageUrl, variants: finalVariants)
+              .toFirestore(),
+        );
   }
 
   Future<void> deleteProduct(String productId) async {

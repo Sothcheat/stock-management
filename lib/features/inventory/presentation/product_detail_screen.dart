@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,6 +10,8 @@ import '../../auth/domain/user_model.dart';
 import '../../inventory/data/inventory_repository.dart';
 import '../../inventory/domain/product.dart';
 import '../../products/data/providers/product_provider.dart';
+import '../../orders/data/firebase_orders_repository.dart';
+import '../../orders/domain/order.dart';
 import '../data/providers/category_provider.dart';
 
 class ProductDetailScreen extends ConsumerWidget {
@@ -321,10 +324,37 @@ class ProductDetailScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 32),
 
-            // Variants
+            // Inventory & Stock Section (Unified)
             if (currentProduct.variants.isNotEmpty) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "Variants & Stock",
+                    style: GoogleFonts.outfit(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: SoftColors.textMain,
+                    ),
+                  ),
+                  Text(
+                    "Total: ${currentProduct.totalStock}",
+                    style: GoogleFonts.outfit(
+                      color: SoftColors.brandPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _UnifiedVariantList(
+                product: currentProduct,
+                isEmployee: isEmployee,
+              ),
+            ] else ...[
+              // Fallback for non-variant products (Keep existing Manage Stock)
               Text(
-                "Variants",
+                "Manage Stock",
                 style: GoogleFonts.outfit(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -332,66 +362,11 @@ class ProductDetailScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              ...currentProduct.variants.map(
-                (v) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: SoftCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 16,
-                    ),
-                    child: Row(
-                      children: [
-                        Text(
-                          v.name,
-                          style: GoogleFonts.outfit(
-                            fontWeight: FontWeight.w600,
-                            color: SoftColors.textMain,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: SoftColors.brandPrimary.withValues(
-                              alpha: 0.1,
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            "${v.stockQuantity} in stock",
-                            style: GoogleFonts.outfit(
-                              color: SoftColors.brandPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              _StockAdjustmentCard(
+                product: currentProduct,
+                isEmployee: isEmployee,
               ),
             ],
-
-            // Stock Adjustment Section
-            Text(
-              "Manage Stock",
-              style: GoogleFonts.outfit(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: SoftColors.textMain,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _StockAdjustmentCard(
-              product: currentProduct,
-              isEmployee: isEmployee,
-            ),
 
             const SizedBox(height: 48),
 
@@ -512,39 +487,199 @@ class _StockAdjustmentCard extends ConsumerStatefulWidget {
 
 class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
   bool _isUpdating = false;
+  final Map<String, int> _selectedVariantQuantities = {};
 
+  @override
   @override
   Widget build(BuildContext context) {
     if (widget.isEmployee) {
-      // Employees: View only for Out of Stock
       if (widget.product.totalStock <= 0) {
         return const SizedBox.shrink();
       }
-      // Employees: Only see Reduce Stock for Low Stock items
       if (widget.product.totalStock > widget.product.lowStockThreshold) {
         return const SizedBox.shrink();
       }
     }
 
     if (widget.product.variants.isNotEmpty) {
+      final hasSelection = _selectedVariantQuantities.values.any((q) => q > 0);
+
       return SoftCard(
-        padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Column(
           children: [
-            const Icon(
-              Icons.info_outline_rounded,
-              color: SoftColors.textSecondary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                "Stock is managed via variants.",
-                style: GoogleFonts.outfit(
-                  color: SoftColors.textSecondary,
-                  fontStyle: FontStyle.italic,
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: SoftColors.brandPrimary.withValues(
+                      alpha: 0.1,
+                    ), // Used primary instead of secondary
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.shopping_bag_outlined,
+                    color: SoftColors.brandPrimary,
+                    size: 20,
+                  ),
                 ),
-              ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Quick Sale",
+                      style: GoogleFonts.outfit(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: SoftColors.textMain,
+                      ),
+                    ),
+                    Text(
+                      "Select variants to sell",
+                      style: GoogleFonts.outfit(
+                        color: SoftColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
+            const SizedBox(height: 16),
+            Divider(height: 1, color: SoftColors.border.withValues(alpha: 0.5)),
+            const SizedBox(height: 16),
+            ...widget.product.variants.map((v) {
+              final qty = _selectedVariantQuantities[v.id] ?? 0;
+              final isOutOfStock = v.stockQuantity == 0;
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 24), // Increased spacing
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        // Changed to Row for icon + text group
+                        children: [
+                          // Thumbnail
+                          Container(
+                            width: 48, // Bigger
+                            height: 48, // Bigger
+                            decoration: BoxDecoration(
+                              color: SoftColors.bgLight,
+                              borderRadius: BorderRadius.circular(
+                                12,
+                              ), // Increased radius
+                              image: v.imagePath != null
+                                  ? DecorationImage(
+                                      image: NetworkImage(v.imagePath!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            child: v.imagePath == null
+                                ? const Icon(
+                                    Icons.layers_outlined,
+                                    size: 24,
+                                    color: SoftColors.textSecondary,
+                                  ) // Bigger icon
+                                : null,
+                          ),
+                          const SizedBox(width: 16), // More breathing room
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  v.name,
+                                  style: GoogleFonts.outfit(
+                                    fontWeight: FontWeight.bold, // Bolder
+                                    fontSize: 16, // Bigger
+                                    color: isOutOfStock
+                                        ? SoftColors.textSecondary.withValues(
+                                            alpha: 0.5,
+                                          )
+                                        : SoftColors.textMain,
+                                  ),
+                                ),
+                                const SizedBox(height: 0), // Spacing
+                                Text(
+                                  isOutOfStock
+                                      ? "Out of Stock"
+                                      : "${v.stockQuantity} available",
+                                  style: GoogleFonts.outfit(
+                                    fontSize: 13, // Slightly bigger
+                                    color: isOutOfStock
+                                        ? SoftColors.error
+                                        : SoftColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!isOutOfStock)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: SoftColors.bgLight,
+                          borderRadius: BorderRadius.circular(
+                            12,
+                          ), // Matches thumbnail radius
+                        ),
+                        child: Row(
+                          children: [
+                            _QtyBtn(
+                              icon: Icons.remove,
+                              onTap: () {
+                                if (qty > 0) {
+                                  setState(() {
+                                    _selectedVariantQuantities[v.id] = qty - 1;
+                                  });
+                                }
+                              },
+                            ),
+                            SizedBox(
+                              width: 36, // Slightly wider
+                              child: Text(
+                                "$qty",
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.outfit(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: SoftColors.textMain,
+                                ),
+                              ),
+                            ),
+                            _QtyBtn(
+                              icon: Icons.add,
+                              onTap: () {
+                                if (qty < v.stockQuantity) {
+                                  setState(() {
+                                    _selectedVariantQuantities[v.id] = qty + 1;
+                                  });
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+            if (hasSelection) ...[
+              const SizedBox(height: 12),
+              SoftButton(
+                label: "Process Sale",
+                onTap: _processVariantBatchSale,
+                isLoading: _isUpdating,
+                backgroundColor: SoftColors.brandPrimary,
+                textColor: Colors.white,
+                icon: Icons.check_circle_outline,
+              ),
+            ],
           ],
         ),
       );
@@ -593,25 +728,23 @@ class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
           const SizedBox(height: 20),
           Row(
             children: [
-              // Quick Reduce 1
               Expanded(
                 child: SoftButton(
                   label: "Reduce 1",
                   onTap: () => _updateStock(-1),
                   isLoading: _isUpdating,
                   backgroundColor: SoftColors.brandPrimary.withValues(
-                    alpha: 0.1,
+                    alpha: 0.9,
                   ),
-                  textColor: SoftColors.brandPrimary,
+                  textColor: SoftColors.bgLight,
                 ),
               ),
               const SizedBox(width: 12),
-              // Custom Reduce
               Expanded(
                 child: SoftButton(
                   label: "Custom",
                   onTap: _showCustomReduceDialog,
-                  isLoading: _isUpdating, // Also disable this if updating
+                  isLoading: _isUpdating,
                   backgroundColor: SoftColors.background,
                   textColor: SoftColors.textMain,
                   icon: Icons.edit_note_rounded,
@@ -624,14 +757,69 @@ class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
     );
   }
 
+  Future<void> _processVariantBatchSale() async {
+    if (_isUpdating) return;
+    setState(() => _isUpdating = true);
+
+    try {
+      final List<OrderItem> items = [];
+      _selectedVariantQuantities.forEach((variantId, qty) {
+        if (qty > 0) {
+          final variant = widget.product.variants.firstWhere(
+            (v) => v.id == variantId,
+          );
+          items.add(
+            OrderItem(
+              productId: widget.product.id,
+              name: widget.product.name,
+              variantId: variantId,
+              variantName: variant.name,
+              quantity: qty,
+              priceAtSale: widget.product.finalPrice,
+              costPriceAtSale: widget.product.costPrice,
+              shipmentCostAtSale: widget.product.shipmentCost ?? 0,
+            ),
+          );
+        }
+      });
+
+      if (items.isEmpty) return;
+
+      final orderId = await ref
+          .read(ordersRepositoryProvider)
+          .createBatchQuickSale(items);
+
+      if (mounted) {
+        setState(() {
+          _selectedVariantQuantities.clear();
+        });
+
+        _showUndoSnackBar(
+          items.fold<int>(0, (p, c) => p + c.quantity),
+          orderId,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Sale failed: $e"),
+            backgroundColor: SoftColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
   Future<void> _updateStock(int delta) async {
     if (_isUpdating) return;
     setState(() => _isUpdating = true);
 
     try {
-      // Calculate new stock
       final currentStock = widget.product.totalStock;
-      final newStock = currentStock + delta; // delta can be negative
+      final newStock = currentStock + delta;
 
       if (newStock < 0) {
         if (mounted) {
@@ -648,25 +836,48 @@ class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
         return;
       }
 
-      // Use manualStock for simple products
-      final updatedProduct = widget.product.copyWith(manualStock: newStock);
-
-      // Use the notifier to update
-      await ref.read(productsProvider.notifier).updateProduct(updatedProduct);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              delta > 0
-                  ? "Stock increased by $delta"
-                  : "Stock reduced by ${delta.abs()}",
-              style: GoogleFonts.outfit(color: Colors.white),
-            ),
-            backgroundColor: SoftColors.success,
-            duration: const Duration(milliseconds: 1000),
-          ),
+      if (delta < 0) {
+        final item = OrderItem(
+          productId: widget.product.id,
+          name: widget.product.name,
+          quantity: delta.abs(),
+          priceAtSale: widget.product.finalPrice,
+          variantId: null,
+          variantName: 'Manual Stock',
         );
+
+        final orderId = await ref
+            .read(ordersRepositoryProvider)
+            .createBatchQuickSale([item]);
+
+        if (mounted) {
+          _showUndoSnackBar(delta.abs(), orderId);
+        }
+      } else {
+        // Increase Manual Stock
+        final updatedProduct = widget.product.copyWith(
+          manualStock:
+              (widget.product.manualStock ?? 0) + delta, // Update Manual Stock
+        );
+        // We use productProvider to update to preserve UI flow, though direct repo call is also fine.
+        // Assuming provider has update method or we use repo.
+        // Let's use repo directly to be robust.
+        await ref
+            .read(inventoryRepositoryProvider)
+            .updateProduct(updatedProduct, null);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "Stock increased by $delta",
+                style: GoogleFonts.outfit(color: Colors.white),
+              ),
+              backgroundColor: SoftColors.success,
+              duration: const Duration(milliseconds: 1000),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -680,6 +891,58 @@ class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
+  }
+
+  void _showUndoSnackBar(int count, String orderId) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                "Sold $count items",
+                style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: SoftColors.success,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: "UNDO",
+          textColor: Colors.white,
+          onPressed: () async {
+            try {
+              await ref
+                  .read(ordersRepositoryProvider)
+                  .revertQuickSaleOrder(orderId);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text("Reverted sale of $count items"),
+                    backgroundColor: SoftColors.textMain,
+                  ),
+                );
+              }
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text("Undo failed: $e"),
+                    backgroundColor: SoftColors.error,
+                  ),
+                );
+              }
+            }
+          },
+        ),
+      ),
+    );
+    HapticFeedback.lightImpact();
   }
 
   void _showCustomReduceDialog() {
@@ -733,6 +996,481 @@ class _StockAdjustmentCardState extends ConsumerState<_StockAdjustmentCard> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _UnifiedVariantList extends ConsumerStatefulWidget {
+  final Product product;
+  final bool isEmployee;
+  const _UnifiedVariantList({required this.product, required this.isEmployee});
+
+  @override
+  ConsumerState<_UnifiedVariantList> createState() =>
+      _UnifiedVariantListState();
+}
+
+class _UnifiedVariantListState extends ConsumerState<_UnifiedVariantList> {
+  bool _isUpdating = false;
+  final Map<String, int> _pendingAdjustments = {};
+
+  void _adjustQuantity(String variantId, int delta) {
+    setState(() {
+      final current = _pendingAdjustments[variantId] ?? 0;
+      final newValue = current + delta;
+
+      // Ensure we don't go below the actual stock available if selling
+      // (This is a simplified check, ideally we check against actual variant stock)
+      // But user wants "change you want to make".
+      // If I want to sell 5, I set -5.
+      // Limits: Can't sell more than stock. Can't restock < 0 (wait, restock is positive).
+      // Let's just allow free range but validate on process?
+      // Creating a "safe" limit:
+      final v = widget.product.variants.firstWhere((v) => v.id == variantId);
+      if (newValue < 0 && newValue.abs() > v.stockQuantity) {
+        // Can't sell more than we have
+        return;
+      }
+
+      if (newValue == 0) {
+        _pendingAdjustments.remove(variantId);
+      } else {
+        _pendingAdjustments[variantId] = newValue;
+      }
+    });
+    HapticFeedback.lightImpact();
+  }
+
+  Future<void> _processAdjustments() async {
+    if (_isUpdating || _pendingAdjustments.isEmpty) return;
+    setState(() => _isUpdating = true);
+
+    try {
+      final salesItems = <OrderItem>[];
+      final restockUpdates = <ProductVariant>[];
+      final currentVariants = widget.product.variants;
+
+      // Split adjustments
+      for (var entry in _pendingAdjustments.entries) {
+        final variantId = entry.key;
+        final adjustment = entry.value;
+        final variant = currentVariants.firstWhere((v) => v.id == variantId);
+
+        if (adjustment < 0) {
+          // Selling
+          salesItems.add(
+            OrderItem(
+              productId: widget.product.id,
+              name: widget.product.name,
+              variantId: variantId,
+              variantName: variant.name,
+              quantity: adjustment.abs(),
+              priceAtSale: widget.product.finalPrice,
+              costPriceAtSale: widget.product.costPrice,
+              shipmentCostAtSale: widget.product.shipmentCost ?? 0,
+            ),
+          );
+        } else if (adjustment > 0) {
+          // Restocking
+          restockUpdates.add(
+            ProductVariant(
+              id: variant.id,
+              name: variant.name,
+              stockQuantity:
+                  variant.stockQuantity + adjustment, // Add the adjustment
+              imagePath: variant.imagePath,
+            ),
+          );
+        }
+      }
+
+      // 1. Process Sales
+      String? saleOrderId;
+      if (salesItems.isNotEmpty) {
+        saleOrderId = await ref
+            .read(ordersRepositoryProvider)
+            .createBatchQuickSale(salesItems);
+      }
+
+      // 2. Process Restocks
+      if (restockUpdates.isNotEmpty) {
+        // We need to merge unrelated variants with updated ones
+        final mergedVariants = currentVariants.map((v) {
+          final updated = restockUpdates.where((u) => u.id == v.id).firstOrNull;
+          return updated ?? v;
+        }).toList();
+
+        final updatedProduct = widget.product.copyWith(
+          variants: mergedVariants,
+        );
+        await ref
+            .read(inventoryRepositoryProvider)
+            .updateProduct(updatedProduct, null);
+      }
+
+      if (mounted) {
+        // Success Feedback
+        _pendingAdjustments.clear();
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+        // If we had a sale, show undo
+        // If we had mixed or just restock, show generic success
+        // Prioritize sale undo for simplicity as requested
+        if (saleOrderId != null) {
+          final totalSold = salesItems.fold<int>(0, (p, c) => p + c.quantity);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "Sold $totalSold items${restockUpdates.isNotEmpty ? ' & Updated Stock' : ''}",
+                      style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: SoftColors.success,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 4),
+              action: SnackBarAction(
+                label: "UNDO",
+                textColor: Colors.white,
+                onPressed: () async {
+                  await ref
+                      .read(ordersRepositoryProvider)
+                      .revertQuickSaleOrder(saleOrderId!);
+                },
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "Stock updated successfully",
+                style: GoogleFonts.outfit(color: Colors.white),
+              ),
+              backgroundColor: SoftColors.success,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Action failed: $e"),
+            backgroundColor: SoftColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _deleteVariant(String variantId) async {
+    final updatedVariants = widget.product.variants
+        .where((v) => v.id != variantId)
+        .toList();
+
+    final updatedProduct = widget.product.copyWith(variants: updatedVariants);
+
+    try {
+      await ref
+          .read(inventoryRepositoryProvider)
+          .updateProduct(updatedProduct, null);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Variant deleted"),
+            backgroundColor: SoftColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Failed to delete variant: $e"),
+            backgroundColor: SoftColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  void _confirmDeleteVariant(ProductVariant v) {
+    showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: SoftColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(SoftColors.cardRadius),
+        ),
+        title: Text(
+          "Delete Variant?",
+          style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          "Are you sure you want to delete '${v.name}'? This cannot be undone.",
+          style: GoogleFonts.outfit(color: SoftColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(c);
+              _deleteVariant(v.id);
+            },
+            child: Text(
+              "Delete",
+              style: GoogleFonts.outfit(
+                color: SoftColors.error,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ...widget.product.variants.map((v) {
+          final isLowStock =
+              v.stockQuantity <= widget.product.lowStockThreshold;
+          final isOutOfStock = v.stockQuantity <= 0;
+          final pending = _pendingAdjustments[v.id] ?? 0;
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: SoftCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  // Header Row
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Thumbnail
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: SoftColors.bgLight,
+                          borderRadius: BorderRadius.circular(12),
+                          image: v.imagePath != null
+                              ? DecorationImage(
+                                  image: NetworkImage(v.imagePath!),
+                                  fit: BoxFit.cover,
+                                )
+                              : (widget.product.imagePath != null
+                                    ? DecorationImage(
+                                        image: NetworkImage(
+                                          widget.product.imagePath!,
+                                        ),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null),
+                        ),
+                        child:
+                            (v.imagePath == null &&
+                                widget.product.imagePath == null)
+                            ? const Icon(
+                                Icons.layers_outlined,
+                                size: 24,
+                                color: SoftColors.textSecondary,
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              v.name,
+                              style: GoogleFonts.outfit(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                                color: SoftColors.textMain,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            // Status Badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isOutOfStock
+                                    ? SoftColors.error.withValues(alpha: 0.1)
+                                    : (isLowStock
+                                          ? SoftColors.warning.withValues(
+                                              alpha: 0.1,
+                                            )
+                                          : SoftColors.brandPrimary.withValues(
+                                              alpha: 0.1,
+                                            )),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                isOutOfStock
+                                    ? "Out of stock"
+                                    : (isLowStock
+                                          ? "Low: ${v.stockQuantity}"
+                                          : "${v.stockQuantity} in stock"),
+                                style: GoogleFonts.outfit(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: isOutOfStock
+                                      ? SoftColors.error
+                                      : (isLowStock
+                                            ? SoftColors.warning
+                                            : SoftColors.brandPrimary),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Delete Icon
+                      if (!widget.isEmployee)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            color: SoftColors.textSecondary,
+                            size: 20,
+                          ),
+                          onPressed: () => _confirmDeleteVariant(v),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          style: IconButton.styleFrom(
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Adjustable Row
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: SoftColors.bgLight,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          "Adjust Quantity",
+                          style: GoogleFonts.outfit(
+                            color: SoftColors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.all(4), // Even padding
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.05),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _QtyBtn(
+                                icon: Icons.remove,
+                                onTap: _isUpdating
+                                    ? () {}
+                                    : () => _adjustQuantity(v.id, -1),
+                              ),
+                              SizedBox(
+                                width: 32, // Smaller width
+                                child: Text(
+                                  "$pending",
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.outfit(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16, // Smaller font
+                                    color: pending == 0
+                                        ? SoftColors.textMain
+                                        : (pending < 0
+                                              ? SoftColors.error
+                                              : SoftColors.success),
+                                  ),
+                                ),
+                              ),
+                              _QtyBtn(
+                                icon: Icons.add,
+                                onTap: _isUpdating
+                                    ? () {}
+                                    : () => _adjustQuantity(v.id, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+
+        if (_pendingAdjustments.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          SoftButton(
+            label: "Process Updates",
+            onTap: _processAdjustments,
+            isLoading: _isUpdating,
+            backgroundColor: SoftColors.brandPrimary,
+            textColor: Colors.white,
+            icon: Icons.check_circle_outline,
+          ),
+          const SizedBox(height: 32), // Bottom padding
+        ],
+      ],
+    );
+  }
+}
+
+class _QtyBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _QtyBtn({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(10), // Bigger touch target
+        child: Icon(icon, size: 20, color: SoftColors.brandPrimary),
       ),
     );
   }

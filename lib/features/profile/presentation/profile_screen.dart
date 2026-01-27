@@ -144,8 +144,8 @@ class ProfileScreen extends ConsumerWidget {
                 SoftButton(
                   label: "Sign Out",
                   icon: Icons.logout_rounded,
-                  backgroundColor: SoftColors.error.withValues(alpha: 0.1),
-                  textColor: SoftColors.error,
+                  backgroundColor: SoftColors.error.withValues(alpha: 0.9),
+                  textColor: Colors.white,
                   onTap: () async {
                     await ref.read(authRepositoryProvider).signOut();
                     // Router should handle redirect via authStateChanges

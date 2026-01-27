@@ -101,10 +101,18 @@ Stream<List<DailyData>> yearlyReport(Ref ref, DateTime targetDate) {
         final monthKey = daily.date.substring(0, 7);
         if (monthlyAggregation.containsKey(monthKey)) {
           final current = monthlyAggregation[monthKey]!;
+
+          // Merge product rankings
+          final mergedRanking = Map<String, int>.from(current.productRanking);
+          daily.productRanking.forEach((key, qty) {
+            mergedRanking[key] = (mergedRanking[key] ?? 0) + qty;
+          });
+
           monthlyAggregation[monthKey] = DailyData(
             current.date,
             current.revenue + daily.totalRevenue,
             current.profit + daily.totalProfit,
+            productRanking: mergedRanking,
           );
         }
       }
@@ -143,11 +151,18 @@ Stream<List<DailyData>> allTimeReport(Ref ref, DateTime targetDate) {
         );
       }
       final current = monthlyAggregation[monthKey]!;
+
+      // Merge product rankings
+      final mergedRanking = Map<String, int>.from(current.productRanking);
+      daily.productRanking.forEach((key, qty) {
+        mergedRanking[key] = (mergedRanking[key] ?? 0) + qty;
+      });
+
       monthlyAggregation[monthKey] = DailyData(
         current.date,
         current.revenue + daily.totalRevenue,
         current.profit + daily.totalProfit,
-        productRanking: current.productRanking,
+        productRanking: mergedRanking,
       );
     }
 

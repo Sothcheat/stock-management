@@ -3,13 +3,34 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 enum OrderStatus {
   prepping,
   delivering,
-  completed;
+  completed,
+  cancelled;
 
   static OrderStatus fromString(String status) {
     return OrderStatus.values.firstWhere(
       (e) => e.name == status,
-      orElse: () => OrderStatus.prepping,
+      orElse: () =>
+          OrderStatus.completed, // Default to completed for legacy/unknown
     );
+  }
+}
+
+enum OrderType {
+  standard,
+  manualReduction;
+
+  static OrderType fromString(String? type) {
+    if (type == 'manual_reduction') return OrderType.manualReduction;
+    return OrderType.standard;
+  }
+
+  String get toStr {
+    switch (this) {
+      case OrderType.manualReduction:
+        return 'manual_reduction';
+      case OrderType.standard:
+        return 'standard';
+    }
   }
 }
 
@@ -130,6 +151,30 @@ class OrderItem {
     );
   }
 
+  OrderItem copyWith({
+    String? productId,
+    String? variantId,
+    String? variantName,
+    String? name,
+    int? quantity,
+    double? priceAtSale,
+    double? discountAtSale,
+    double? costPriceAtSale,
+    double? shipmentCostAtSale,
+  }) {
+    return OrderItem(
+      productId: productId ?? this.productId,
+      variantId: variantId ?? this.variantId,
+      variantName: variantName ?? this.variantName,
+      name: name ?? this.name,
+      quantity: quantity ?? this.quantity,
+      priceAtSale: priceAtSale ?? this.priceAtSale,
+      discountAtSale: discountAtSale ?? this.discountAtSale,
+      costPriceAtSale: costPriceAtSale ?? this.costPriceAtSale,
+      shipmentCostAtSale: shipmentCostAtSale ?? this.shipmentCostAtSale,
+    );
+  }
+
   // Helper getters
   double get totalRevenue =>
       priceAtSale * quantity; // priceAtSale implies final price after discount?
@@ -158,29 +203,19 @@ class OrderModel {
   final List<OrderItem> items;
   final OrderLogistics logistics;
   final OrderStatus status;
+  final OrderType type;
   final String? note;
   final String createdBy;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final double totalAmount;
 
-  const OrderModel({
-    required this.id,
-    required this.customer,
-    required this.deliveryAddress,
-    required this.items,
-    this.logistics = const OrderLogistics(),
-    required this.totalAmount,
-    this.status = OrderStatus.prepping,
-    this.note,
-    required this.createdBy,
-    required this.createdAt,
-    required this.updatedAt,
-  });
+  // Transient field for pagination cursor (not serialized to/from Firestore)
+  final DocumentSnapshot? snapshot;
 
   // --- Financial Getters ---
 
   double get totalRevenue {
-    // Sum of item prices * qty + delivery fee
     final itemsRevenue = items.fold(
       0.0,
       (total, item) => total + (item.priceAtSale * item.quantity),
@@ -189,7 +224,6 @@ class OrderModel {
   }
 
   double get totalExpense {
-    // Sum of (cost + shipment) * qty + actualDeliveryCost + discounts
     final itemsCost = items.fold(0.0, (total, item) {
       final itemCost =
           (item.costPriceAtSale + item.shipmentCostAtSale) * item.quantity;
@@ -201,27 +235,23 @@ class OrderModel {
 
   double get netProfit => totalRevenue - totalExpense;
 
-  // Wait, if totalRevenue uses priceAtSale (List Price), then the actual "Amount To Pay" by customer is Revenue - Discounts.
-  // Typically `totalAmount` in OrderModel represents what the customer pays.
-  // If `priceAtSale` is the List Price, then `totalAmount` = (price - discount) * qty + delivery.
+  const OrderModel({
+    required this.id,
+    required this.customer,
+    required this.deliveryAddress,
+    required this.items,
+    this.logistics = const OrderLogistics(),
+    required this.totalAmount,
+    this.status = OrderStatus.prepping,
+    this.type = OrderType.standard,
+    this.note,
+    required this.createdBy,
+    required this.createdAt,
+    required this.updatedAt,
+    this.snapshot,
+  });
 
-  // Let's verify `totalAmount` definition in original file.
-  // original `totalAmount` field existed as a plain double.
-  // I should probably keep `totalAmount` as a field or computed getter that represents the Final Value.
-  // The user asked for `totalRevenue`, `totalExpense`, `netProfit`.
-  // I will make `totalAmount` a computed getter or simple field for backward compatibility?
-  // The original had `final double totalAmount;`.
-  // I will keep it as a field for Firestore persistence if needed, but setters/getters are better for consistency.
-  // However, `fromFirestore` reads keys.
-  // I will calculate it in `toFirestore` or let it be stored.
-  // Storing it is safer for history if get logic changes.
-  // But for this refactor, I'll calculate it in the constructor or factory?
-  // Let's keep it as a stored field to avoid breaking changes if logic drifts, BUT update it in copyWith/constructor.
-  // Actually, I'll keep `totalAmount` as a stored field to match existing Firestore data structure, but commonly it should match the math.
-
-  // Revised approach: I will keep `totalAmount` as a parameter to ensure we don't lose data, but the getters above are dynamic.
-
-  final double totalAmount; // Stored total (Customer Paid)
+  // ... (Financial Getters Omitted, assume unchanged)
 
   factory OrderModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
@@ -234,11 +264,13 @@ class OrderModel {
           .toList(),
       logistics: OrderLogistics.fromMap(data['logistics'] ?? {}),
       totalAmount: (data['totalAmount'] ?? 0).toDouble(),
-      status: OrderStatus.fromString(data['status'] ?? 'prepping'),
+      status: OrderStatus.fromString(data['status'] ?? 'completed'),
+      type: OrderType.fromString(data['type']),
       note: data['note'],
       createdBy: data['createdBy'] ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      snapshot: doc,
     );
   }
 
@@ -250,6 +282,7 @@ class OrderModel {
       'logistics': logistics.toMap(),
       'totalAmount': totalAmount,
       'status': status.name,
+      'type': type.toStr,
       'note': note,
       'createdBy': createdBy,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -265,6 +298,7 @@ class OrderModel {
     OrderLogistics? logistics,
     double? totalAmount,
     OrderStatus? status,
+    OrderType? type,
     String? note,
     DateTime? updatedAt,
   }) {
@@ -276,6 +310,7 @@ class OrderModel {
       logistics: logistics ?? this.logistics,
       totalAmount: totalAmount ?? this.totalAmount,
       status: status ?? this.status,
+      type: type ?? this.type,
       note: note ?? this.note,
       createdBy: createdBy,
       createdAt: createdAt,

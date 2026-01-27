@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
-import '../../auth/data/providers/auth_providers.dart'; // Import this
+import '../../auth/data/providers/auth_providers.dart';
+
 import 'widgets/dashboard_performance_card.dart';
 import 'widgets/stock_alert_section.dart';
 import 'widgets/active_orders_section.dart';
@@ -24,6 +25,66 @@ class DashboardScreen extends ConsumerWidget {
 
     return SoftScaffold(
       title: "Dashboard",
+      titleWidget: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Good Morning,",
+            style: GoogleFonts.outfit(
+              color: SoftColors.textSecondary,
+              fontSize: 14,
+            ),
+          ),
+          userProfileAsync.when(
+            data: (user) {
+              final name = user?.name ?? 'User';
+              final role = (user?.role.name ?? 'Employee').toUpperCase();
+
+              return Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      name,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.outfit(
+                        color: SoftColors.textMain,
+                        fontSize: 24, // Optimized from 26
+                        fontWeight: FontWeight.w800, // Extra Bold
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      role,
+                      style: GoogleFonts.outfit(
+                        color: SoftColors.brandPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+            loading: () => const SizedBox(
+              height: 20,
+              width: 100,
+              child: LinearProgressIndicator(),
+            ),
+            error: (e, st) => const Text("User"),
+          ),
+        ],
+      ),
       actions: [
         BounceButton(
           onTap: () {}, // TODO: Notifications
@@ -46,71 +107,12 @@ class DashboardScreen extends ConsumerWidget {
             ),
           ),
         ),
-        // Removed trailing SizedBox(width: 24) to fix alignment
       ],
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 80),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 12),
-            // Header
-            Text(
-              "Good Morning,",
-              style: GoogleFonts.outfit(
-                color: SoftColors.textSecondary,
-                fontSize: 16,
-              ),
-            ),
-            userProfileAsync.when(
-              data: (user) {
-                final name = user?.name ?? 'User';
-                final role = (user?.role.name ?? 'Employee').toUpperCase();
-
-                return Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        name,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.outfit(
-                          color: SoftColors.textMain,
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: SoftColors.brandAccent.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: SoftColors.brandAccent.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Text(
-                        role,
-                        style: GoogleFonts.outfit(
-                          color: SoftColors.brandAccent,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-              loading: () => const SizedBox(height: 38), // Placeholder
-              error: (e, st) => const Text("Error loading profile"),
-            ),
-            const SizedBox(height: 24),
-
             // 1. Interactive Performance Card
             // Only show for Owner/Admin
             // 1. Interactive Performance Card

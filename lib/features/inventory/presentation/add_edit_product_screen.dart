@@ -237,6 +237,23 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
     );
   }
 
+  void _editVariant(int index) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AddVariantDialog(
+          variant: _variants[index],
+          onVariantAdded: (updatedVariant) {
+            setState(() {
+              _variants[index] = updatedVariant;
+            });
+          },
+        );
+      },
+    );
+  }
+
   // ... (omitted _addNewCategory and _buildDiscountTypeBtn for brevity, assuming no changes there)
   // Re-include them if they were in the range, but I'll skip to build method changes.
   // Actually, replace_file_content needs exact context.
@@ -919,41 +936,99 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
                       child: SoftCard(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
-                          vertical: 8,
+                          vertical: 12,
                         ),
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            v.name,
-                            style: GoogleFonts.outfit(
-                              fontWeight: FontWeight.bold,
-                              color: SoftColors.textMain,
+                        child: Row(
+                          children: [
+                            // Thumbnail
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: SoftColors.bgLight,
+                                borderRadius: BorderRadius.circular(12),
+                                image: v.imagePath != null
+                                    ? DecorationImage(
+                                        image:
+                                            (v.imagePath!.startsWith('http')
+                                                    ? NetworkImage(v.imagePath!)
+                                                    : FileImage(
+                                                        File(v.imagePath!),
+                                                      ))
+                                                as ImageProvider,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
+                              ),
+                              child: v.imagePath == null
+                                  ? const Icon(
+                                      Icons.layers_outlined,
+                                      size: 24,
+                                      color: SoftColors.textSecondary,
+                                    )
+                                  : null,
                             ),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Qty: ${v.stockQuantity}',
-                                style: GoogleFonts.outfit(
-                                  color: SoftColors.textSecondary,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    v.name,
+                                    style: GoogleFonts.outfit(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: SoftColors.textMain,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Qty: ${v.stockQuantity}',
+                                    style: GoogleFonts.outfit(
+                                      color: SoftColors.textSecondary,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete_outline,
-                                  color: SoftColors.error,
+                            ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                InkWell(
+                                  onTap: () => _editVariant(index),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Icon(
+                                      Icons.edit_rounded,
+                                      size: 20,
+                                      color: SoftColors.brandPrimary.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                                onPressed: () {
-                                  setState(() {
-                                    _variants.removeAt(index);
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
+                                InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      _variants.removeAt(index);
+                                    });
+                                  },
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(8),
+                                    child: Icon(
+                                      Icons.delete_outline_rounded,
+                                      size: 20,
+                                      color: SoftColors.error,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                     );
