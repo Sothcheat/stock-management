@@ -90,7 +90,11 @@ class OrderDetailScreen extends ConsumerWidget {
 
                     // Update Local History State immediately if it exists
                     ref
-                        .read(orderHistoryProvider.notifier)
+                        .read(
+                          orderHistoryProvider(
+                            isArchived: currentOrder.isArchived,
+                          ).notifier,
+                        )
                         .removeOrderLocally(currentOrder.id);
 
                     if (context.mounted) context.pop();
@@ -579,7 +583,11 @@ class OrderDetailScreen extends ConsumerWidget {
 
                         // Sync with History List
                         ref
-                            .read(orderHistoryProvider.notifier)
+                            .read(
+                              orderHistoryProvider(
+                                isArchived: updatedOrder.isArchived,
+                              ).notifier,
+                            )
                             .updateOrderLocally(updatedOrder);
                       }
                     },
@@ -607,7 +615,11 @@ class OrderDetailScreen extends ConsumerWidget {
                         status: OrderStatus.completed,
                       );
                       ref
-                          .read(orderHistoryProvider.notifier)
+                          .read(
+                            orderHistoryProvider(
+                              isArchived: updatedOrder.isArchived,
+                            ).notifier,
+                          )
                           .updateOrderLocally(updatedOrder);
                     },
                   ),

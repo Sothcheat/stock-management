@@ -14,6 +14,7 @@ import '../../features/orders/presentation/order_list_screen.dart';
 import '../../features/orders/presentation/add_new_order_screen.dart';
 import '../../features/orders/presentation/product_selection_screen.dart';
 import '../../features/orders/presentation/order_detail_screen.dart';
+import '../../features/orders/presentation/archived_orders_screen.dart';
 import '../../features/orders/domain/order.dart';
 import '../../features/reports/presentation/report_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
@@ -124,6 +125,11 @@ final routerProvider = Provider<GoRouter>((ref) {
                     parentNavigatorKey: _rootNavigatorKey,
                     builder: (context, state) =>
                         OrderDetailScreen(order: state.extra as OrderModel),
+                  ),
+                  GoRoute(
+                    path: 'archived',
+                    parentNavigatorKey: _rootNavigatorKey,
+                    builder: (context, state) => const ArchivedOrdersScreen(),
                   ),
                 ],
               ),

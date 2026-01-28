@@ -6,7 +6,7 @@ part of 'reports_provider.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$weeklyReportHash() => r'92bf1eb2f0a48b401ae8921920f9ebf2175afaf4';
+String _$weeklyReportHash() => r'b91e36ee7ffcbb667621a81a2e5d54cd7e24870c';
 
 /// Copied from Dart SDK
 class _SystemHash {
@@ -147,14 +147,14 @@ class _WeeklyReportProviderElement
   DateTime get targetDate => (origin as WeeklyReportProvider).targetDate;
 }
 
-String _$monthlyReportHash() => r'65be7f6c7044c44d3d1c78f7c5923948ae2e5533';
+String _$monthlyReportHash() => r'cdce9884e4059002689495844cf3f3e0d588dc51';
 
 /// See also [monthlyReport].
 @ProviderFor(monthlyReport)
 const monthlyReportProvider = MonthlyReportFamily();
 
 /// See also [monthlyReport].
-class MonthlyReportFamily extends Family<AsyncValue<List<DailyData>>> {
+class MonthlyReportFamily extends Family<AsyncValue<List<WeeklyGroup>>> {
   /// See also [monthlyReport].
   const MonthlyReportFamily();
 
@@ -186,7 +186,8 @@ class MonthlyReportFamily extends Family<AsyncValue<List<DailyData>>> {
 }
 
 /// See also [monthlyReport].
-class MonthlyReportProvider extends AutoDisposeStreamProvider<List<DailyData>> {
+class MonthlyReportProvider
+    extends AutoDisposeStreamProvider<List<WeeklyGroup>> {
   /// See also [monthlyReport].
   MonthlyReportProvider(DateTime targetDate)
     : this._internal(
@@ -216,7 +217,7 @@ class MonthlyReportProvider extends AutoDisposeStreamProvider<List<DailyData>> {
 
   @override
   Override overrideWith(
-    Stream<List<DailyData>> Function(MonthlyReportRef provider) create,
+    Stream<List<WeeklyGroup>> Function(MonthlyReportRef provider) create,
   ) {
     return ProviderOverride(
       origin: this,
@@ -233,7 +234,7 @@ class MonthlyReportProvider extends AutoDisposeStreamProvider<List<DailyData>> {
   }
 
   @override
-  AutoDisposeStreamProviderElement<List<DailyData>> createElement() {
+  AutoDisposeStreamProviderElement<List<WeeklyGroup>> createElement() {
     return _MonthlyReportProviderElement(this);
   }
 
@@ -253,13 +254,13 @@ class MonthlyReportProvider extends AutoDisposeStreamProvider<List<DailyData>> {
 
 @Deprecated('Will be removed in 3.0. Use Ref instead')
 // ignore: unused_element
-mixin MonthlyReportRef on AutoDisposeStreamProviderRef<List<DailyData>> {
+mixin MonthlyReportRef on AutoDisposeStreamProviderRef<List<WeeklyGroup>> {
   /// The parameter `targetDate` of this provider.
   DateTime get targetDate;
 }
 
 class _MonthlyReportProviderElement
-    extends AutoDisposeStreamProviderElement<List<DailyData>>
+    extends AutoDisposeStreamProviderElement<List<WeeklyGroup>>
     with MonthlyReportRef {
   _MonthlyReportProviderElement(super.provider);
 

@@ -59,6 +59,48 @@ class FirebaseOrdersRepository implements OrderRepository {
   }
 
   @override
+  Future<void> archiveOrder(String orderId, bool archive) async {
+    _ensureOwnerOrAdmin('archive orders');
+    await _firestore.collection('orders').doc(orderId).update({
+      'isArchived': archive,
+      'updatedAt': Timestamp.now(),
+    });
+  }
+
+  @override
+  Future<void> permanentPurgeOrder(String orderId) async {
+    _ensureOwnerOrAdmin('purge orders');
+    // Just delete the doc. No legacy restoration.
+    await _firestore.collection('orders').doc(orderId).delete();
+  }
+
+  @override
+  Future<void> bulkArchive(List<String> ids, bool archive) async {
+    _ensureOwnerOrAdmin('bulk archive');
+    // Firestore batch limit is 500. Assuming list is smaller for this UI.
+    final batch = _firestore.batch();
+    for (final id in ids) {
+      final docRef = _firestore.collection('orders').doc(id);
+      batch.update(docRef, {
+        'isArchived': archive,
+        'updatedAt': Timestamp.now(),
+      });
+    }
+    await batch.commit();
+  }
+
+  @override
+  Future<void> bulkPurge(List<String> ids) async {
+    _ensureOwnerOrAdmin('bulk purge');
+    final batch = _firestore.batch();
+    for (final id in ids) {
+      final docRef = _firestore.collection('orders').doc(id);
+      batch.delete(docRef);
+    }
+    await batch.commit();
+  }
+
+  @override
   Stream<List<OrderModel>> getOrdersStream() {
     return _firestore
         .collection('orders')
@@ -85,14 +127,39 @@ class FirebaseOrdersRepository implements OrderRepository {
     int limit = 20,
     DocumentSnapshot? startAfter,
     DateTimeRange? dateRange,
-    String? statusFilter, // Optional status filter
-    OrderType? typeFilter, // Optional type filter
+    String? statusFilter,
+    OrderType? typeFilter,
+    bool isArchived = false,
   }) async {
-    Query query = _firestore
-        .collection('orders')
-        .orderBy('createdAt', descending: true);
+    Query query = _firestore.collection('orders');
 
-    // Apply Filters
+    // 1. Lifecycle Filter
+    // HYBRID STRATEGY:
+    // - If isArchived == true: We can strictly query server-side (Archived items MUST have the flag).
+    // - If isArchived == false: We skip server-side filter to include "Legacy" orders (missing flag).
+    //   We will filter the results in Dart (client-side) to remove any that ARE archived.
+    if (isArchived) {
+      query = query.where('isArchived', isEqualTo: true);
+    }
+
+    // 2. Type/Name Filter & Indexing Rules
+    // 2. Type/Name Filter & Indexing Rules
+    // Rule: If using != (isNotEqualTo), that field MUST be the first orderBy.
+    if (typeFilter != null) {
+      if (typeFilter == OrderType.manualReduction) {
+        query = query.where('customer.name', isEqualTo: 'Quick Sale');
+        // Equality filter: can order by createdAt directly or customer.name first, but for consistent index strategy we can keep createdAt unless we need specific sort.
+      } else if (typeFilter == OrderType.standard) {
+        // Inequality Filter
+        query = query.where('customer.name', isNotEqualTo: 'Quick Sale');
+        // Critical: Must order by the inequality field FIRST
+        query = query.orderBy('customer.name');
+      }
+    }
+    // If typeFilter is null ('All'), we do NOT filter by name at all.
+    // AND we do NOT order by customer.name, avoiding the index requirement for inequality.
+
+    // 3. Date Range Filter
     if (dateRange != null) {
       // Ensure start is at beginning of day, and end is at END of day
       final start = DateTime(
@@ -115,24 +182,14 @@ class FirebaseOrdersRepository implements OrderRepository {
           .where('createdAt', isLessThanOrEqualTo: Timestamp.fromDate(end));
     }
 
+    // 4. Final Sort (Date)
+    // If we have an inequality filter (Standard), this will be the SECOND sort key.
+    // If 'All' or 'Quick Sale' (Equality), this is the FIRST sort key.
+    // Firestore handles merging these orderBy calls.
+    query = query.orderBy('createdAt', descending: true);
+
     if (statusFilter != null && statusFilter.isNotEmpty) {
       query = query.where('status', isEqualTo: statusFilter);
-    }
-
-    if (typeFilter != null) {
-      // FIX: Legacy reservations do not have a 'type' field.
-      // Use customer.name to distinguish 'Quick Sale' from 'Reservations' (Standard).
-
-      if (typeFilter == OrderType.manualReduction) {
-        // Quick Sales
-        query = query.where('customer.name', isEqualTo: 'Quick Sale');
-      } else if (typeFilter == OrderType.standard) {
-        // Reservations: Not 'Quick Sale'
-        // FIX: Firestore requires ordering by the same field used in an inequality filter.
-        query = query
-            .where('customer.name', isNotEqualTo: 'Quick Sale')
-            .orderBy('customer.name'); // Required by Firestore for !=
-      }
     }
 
     // Pagination
@@ -153,6 +210,11 @@ class FirebaseOrdersRepository implements OrderRepository {
     return snapshot.docs.map((doc) => OrderModel.fromFirestore(doc)).where((
       order,
     ) {
+      // 0. ARCHIVE FILTER (Crucial for Hybrid Strategy)
+      // If we want Active (isArchived=false), exclude true.
+      // If we want Archived (isArchived=true), the server filter did it, but this double-checks.
+      if (order.isArchived != isArchived) return false;
+
       // 1. If strict status filter is requested, obey it.
       if (statusFilter != null && statusFilter.isNotEmpty) {
         return order.status.name == statusFilter;
@@ -768,6 +830,35 @@ class FirebaseOrdersRepository implements OrderRepository {
         'updatedAt': Timestamp.now(),
       });
     });
+  }
+
+  @override
+  Future<void> bulkDelete(List<String> ids) async {
+    _ensureOwnerOrAdmin('delete orders');
+    if (ids.isEmpty) return;
+
+    // Process in chunks of 10 for Firestore 'whereIn' limit (10 or 30 depending on SDK, 10 is safe)
+    // Actually, 'whereIn' supports up to 30. But simpler to just loop gets or batch.
+    // Given mobile selection is small, looping gets is acceptable, or fetch all.
+    // Or just define a helper.
+
+    // Efficient Approach: Chunk IDs, query orders, then execute delete.
+    const int chunkSize = 10;
+    for (var i = 0; i < ids.length; i += chunkSize) {
+      final end = (i + chunkSize < ids.length) ? i + chunkSize : ids.length;
+      final chunk = ids.sublist(i, end);
+
+      final snapshot = await _firestore
+          .collection('orders')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        final order = OrderModel.fromFirestore(doc);
+        // Execute delete safely (handles stock restore & transactions)
+        await deleteOrder(order);
+      }
+    }
   }
 
   @override

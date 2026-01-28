@@ -209,6 +209,7 @@ class OrderModel {
   final DateTime createdAt;
   final DateTime updatedAt;
   final double totalAmount;
+  final bool isArchived; // New Field
 
   // Transient field for pagination cursor (not serialized to/from Firestore)
   final DocumentSnapshot? snapshot;
@@ -248,6 +249,7 @@ class OrderModel {
     required this.createdBy,
     required this.createdAt,
     required this.updatedAt,
+    this.isArchived = false,
     this.snapshot,
   });
 
@@ -270,6 +272,7 @@ class OrderModel {
       createdBy: data['createdBy'] ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      isArchived: data['isArchived'] ?? false,
       snapshot: doc,
     );
   }
@@ -287,6 +290,7 @@ class OrderModel {
       'createdBy': createdBy,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
+      'isArchived': isArchived,
     };
   }
 
@@ -301,6 +305,7 @@ class OrderModel {
     OrderType? type,
     String? note,
     DateTime? updatedAt,
+    bool? isArchived,
   }) {
     return OrderModel(
       id: id ?? this.id,
@@ -315,6 +320,7 @@ class OrderModel {
       createdBy: createdBy,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isArchived: isArchived ?? this.isArchived,
     );
   }
 }

@@ -11,6 +11,7 @@ import '../../reports/domain/daily_summary.dart';
 import '../../reports/domain/report_time_range.dart';
 import 'providers/reports_provider.dart';
 // import 'widgets/custom_line_chart.dart'; // REMOVED
+import '../../../../core/utils/date_utils.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../inventory/data/inventory_repository.dart';
 import '../../inventory/domain/product.dart';
@@ -114,9 +115,8 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
   String _getDateLabel() {
     switch (_selectedRange) {
       case ReportTimeRange.weekly:
-        final int offsetToSunday = _focusedDate.weekday % 7;
-        final start = _focusedDate.subtract(Duration(days: offsetToSunday));
-        final end = start.add(const Duration(days: 6));
+        final start = DateUtilsHelper.getStartOfWeek(_focusedDate);
+        final end = DateUtilsHelper.getEndOfWeek(_focusedDate);
         final startFormat = DateFormat('MMM d').format(start);
         final endFormat = DateFormat('MMM d, yyyy').format(end);
         return "$startFormat - $endFormat";
@@ -131,41 +131,53 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Determine Provider
-    AsyncValue<List<DailyData>> summariesAsync;
-    switch (_selectedRange) {
-      case ReportTimeRange.weekly:
-        summariesAsync = ref.watch(weeklyReportProvider(_focusedDate));
-        break;
-      case ReportTimeRange.monthly:
-        summariesAsync = ref.watch(monthlyReportProvider(_focusedDate));
-        break;
-      case ReportTimeRange.yearly:
-        summariesAsync = ref.watch(yearlyReportProvider(_focusedDate));
-        break;
-      case ReportTimeRange.allTime:
-        summariesAsync = ref.watch(allTimeReportProvider(_focusedDate));
-        break;
+    // 1. Fetch Data based on Range
+    // Split Monthly (List<WeeklyGroup>) vs Others (List<DailyData>)
+    final isMonthly = _selectedRange == ReportTimeRange.monthly;
+
+    AsyncValue<List<WeeklyGroup>>? monthlyAsync;
+    AsyncValue<List<DailyData>>? dailyAsync;
+
+    if (isMonthly) {
+      monthlyAsync = ref.watch(monthlyReportProvider(_focusedDate));
+    } else {
+      dailyAsync = ref.watch(
+        _selectedRange == ReportTimeRange.weekly
+            ? weeklyReportProvider(_focusedDate)
+            : _selectedRange == ReportTimeRange.yearly
+            ? yearlyReportProvider(_focusedDate)
+            : allTimeReportProvider(_focusedDate),
+      );
     }
 
     // 2. Side Effect: Haptics
-    ref.listen(
-      _selectedRange == ReportTimeRange.weekly
-          ? weeklyReportProvider(_focusedDate)
-          : _selectedRange == ReportTimeRange.monthly
-          ? monthlyReportProvider(_focusedDate)
-          : _selectedRange == ReportTimeRange.yearly
-          ? yearlyReportProvider(_focusedDate)
-          : allTimeReportProvider(_focusedDate),
-      (previous, next) {
+    // 2. Side Effect: Haptics
+    if (isMonthly) {
+      ref.listen(monthlyReportProvider(_focusedDate), (previous, next) {
         if (next.hasValue &&
             !next.isLoading &&
             previous?.value != null &&
             previous!.value != next.value) {
           HapticFeedback.lightImpact();
         }
-      },
-    );
+      });
+    } else {
+      ref.listen(
+        _selectedRange == ReportTimeRange.weekly
+            ? weeklyReportProvider(_focusedDate)
+            : _selectedRange == ReportTimeRange.yearly
+            ? yearlyReportProvider(_focusedDate)
+            : allTimeReportProvider(_focusedDate),
+        (previous, next) {
+          if (next.hasValue &&
+              !next.isLoading &&
+              previous?.value != null &&
+              previous!.value != next.value) {
+            HapticFeedback.lightImpact();
+          }
+        },
+      );
+    }
 
     final userRole = ref.watch(currentUserProfileProvider).value?.role;
     final isEmployee = userRole == UserRole.employee;
@@ -189,21 +201,50 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
 
     final showNavigation = _selectedRange != ReportTimeRange.allTime;
 
-    // 3. Extract Data safely
-    final summaries = summariesAsync.valueOrNull ?? [];
+    // 3. Extract Data & Unify for Graphs
+    // We need a uniform List<DailyData> for the Graph and Totals (unless we sum WeeklyGroups differently)
+    List<DailyData> flatDailyData = [];
+    List<WeeklyGroup> monthlyGroups = [];
 
-    // Check loading/error
-    final isInitialLoading =
-        summariesAsync.isLoading && !summariesAsync.hasValue;
-    final hasError = summariesAsync.hasError && !summariesAsync.hasValue;
+    bool isLoading = false;
+    bool hasError = false;
+
+    if (isMonthly) {
+      isLoading = monthlyAsync?.isLoading ?? false;
+      hasError = monthlyAsync?.hasError ?? false;
+      monthlyGroups = monthlyAsync?.valueOrNull ?? [];
+
+      // Flatten for graph/totals usage if needed
+      for (var group in monthlyGroups) {
+        flatDailyData.addAll(group.days);
+      }
+      // Sort flat data for graph consistency
+      flatDailyData.sort((a, b) => b.date.compareTo(a.date));
+    } else {
+      isLoading = dailyAsync?.isLoading ?? false;
+      hasError = dailyAsync?.hasError ?? false;
+      flatDailyData = dailyAsync?.valueOrNull ?? [];
+    }
 
     // Calculate Totals
     double totalRevenue = 0;
     double totalProfit = 0;
-    for (var s in summaries) {
+
+    // For Monthly, we can sum from groups or flat data.
+    // If we use flatData, it works for all cases.
+    for (var s in flatDailyData) {
       totalRevenue += s.revenue;
       totalProfit += s.profit;
     }
+
+    // Unified Loading State
+    final isInitialLoading =
+        isLoading && flatDailyData.isEmpty && monthlyGroups.isEmpty;
+    final isEmpty =
+        !isLoading &&
+        !hasError &&
+        flatDailyData.isEmpty &&
+        monthlyGroups.isEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -505,13 +546,9 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
                       ? Container(
                           key: const ValueKey('error'),
                           constraints: const BoxConstraints(minHeight: 400),
-                          child: Center(
-                            child: Text(
-                              "Error loading data: ${summariesAsync.error}",
-                            ),
-                          ),
+                          child: Center(child: Text("Error loading data")),
                         )
-                      : summaries.isEmpty
+                      : isEmpty
                       ? Container(
                           key: const ValueKey('empty'),
                           width: double.infinity,
@@ -588,13 +625,16 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
                               ),
                               const SizedBox(height: 16),
 
-                              // The LIST is the hero now.
-                              _SalesAnalysisList(
-                                key: ValueKey("$_focusedDate-$_isDescending"),
-                                data: summaries,
-                                range: _selectedRange,
-                                isDescending: _isDescending,
-                              ),
+                              // Conditional Monthly View vs Flat List
+                              if (isMonthly)
+                                _buildMonthlyView(context, monthlyGroups)
+                              else
+                                _SalesAnalysisList(
+                                  key: ValueKey("$_focusedDate-$_isDescending"),
+                                  data: flatDailyData,
+                                  range: _selectedRange,
+                                  isDescending: _isDescending,
+                                ),
 
                               const SizedBox(height: 32),
                               Row(
@@ -612,7 +652,7 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
                                 ],
                               ),
                               const SizedBox(height: 16),
-                              _TopProductsList(summaries: summaries),
+                              _TopProductsList(summaries: flatDailyData),
                               const SizedBox(height: 40),
                             ],
                           ),
@@ -637,6 +677,176 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
       case ReportTimeRange.allTime:
         return 'All Time';
     }
+  }
+
+  Widget _buildMonthlyView(BuildContext context, List<WeeklyGroup> data) {
+    return Column(
+      children: data.asMap().entries.map((entry) {
+        final weekGroup = entry.value;
+        final start = weekGroup.weekStart;
+
+        // Week Number Logic:
+        // Use the new strict yearly calculation.
+        // VISUAL FIX: If week number is > 52 (e.g. 53) and it's January, user might find it confusing.
+        // However, standard ISO weeks do go up to 53.
+        // But the user requested: "If Week > 52 (e.g. 53), label as 'Week 1' or 'Initial Week'".
+        // Let's stick to "Week 1" for simplicity in this context if it's the start of the year.
+        int displayWeekNumber = DateUtilsHelper.getWeekOfYear(start);
+        if (displayWeekNumber > 52 && start.month == 1) {
+          displayWeekNumber = 1;
+        }
+
+        final isEmpty = weekGroup.totalRevenue == 0;
+        final contentOpacity = isEmpty ? 0.7 : 1.0;
+        final textColor = isEmpty ? Colors.grey[400] : SoftColors.brandPrimary;
+        final secondaryTextColor = isEmpty
+            ? Colors.grey[400]
+            : SoftColors.textSecondary;
+
+        return Opacity(
+          opacity: contentOpacity,
+          child: Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            elevation: 0,
+            color: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Theme(
+                data: Theme.of(
+                  context,
+                ).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  enabled: !isEmpty, // Disable expansion if empty
+                  tilePadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12, // More vertical padding for taller card
+                  ),
+                  childrenPadding: const EdgeInsets.only(bottom: 12),
+                  // Custom Header Layout
+                  title: Row(
+                    children: [
+                      // 1. Thumbnail (Left)
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: isEmpty
+                              ? Colors.grey[100]
+                              : SoftColors.brandPrimary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              "W$displayWeekNumber",
+                              style: GoogleFonts.outfit(
+                                fontWeight: FontWeight.bold,
+                                color: textColor,
+                                fontSize: 14,
+                              ),
+                            ),
+                            Text(
+                              DateFormat('MMM').format(start),
+                              style: GoogleFonts.outfit(
+                                color: secondaryTextColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+
+                      // 2. Data Columns (Center & Right)
+                      Expanded(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            // Revenue Column
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Revenue",
+                                  style: GoogleFonts.outfit(
+                                    fontSize: 12,
+                                    color: secondaryTextColor,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  "\$${weekGroup.totalRevenue.toStringAsFixed(2)}",
+                                  style: GoogleFonts.outfit(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: textColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            // Profit Column
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  "Profit",
+                                  style: GoogleFonts.outfit(
+                                    fontSize: 12,
+                                    color: secondaryTextColor,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  "${weekGroup.totalProfit >= 0 ? '+' : ''}\$${weekGroup.totalProfit.toStringAsFixed(2)}",
+                                  style: GoogleFonts.outfit(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    // Gold color for profit if active, else gray
+                                    color: isEmpty
+                                        ? Colors.grey[400]
+                                        : const Color(0xFFB8860B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  // Remove default trailing icon or keep it? User didn't specify.
+                  // Default ExpansionTile has a chevron. It might look cluttered with the columns.
+                  // Let's keep it but maybe it pushes content?
+                  // With 'title' taking full width, 'trailing' is to the right of it.
+                  // Our Row is inside 'title'.
+                  // The data columns are Expanded, so they fill available space.
+                  // The chevron will appear after them. This is standard behavior.
+                  children: weekGroup.days.map((dayItem) {
+                    return _DailyReportItem(item: dayItem, isYearlyMode: false);
+                  }).toList(),
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
   }
 }
 
@@ -735,108 +945,35 @@ class _SalesAnalysisList extends StatelessWidget {
     // Ensure min height to prevent jumps
     return Container(
       constraints: const BoxConstraints(minHeight: 400),
-      child: range == ReportTimeRange.monthly
-          ? _buildMonthlyView(context, activeData)
-          : ListView.separated(
-              physics: const NeverScrollableScrollPhysics(),
-              shrinkWrap: true,
-              addRepaintBoundaries: true, // GPU Optimization
-              itemCount: activeData.length,
-              separatorBuilder: (context, index) => Divider(
-                color: SoftColors.textSecondary.withValues(alpha: 0.1),
-                height: 1,
-              ),
-              itemBuilder: (context, index) =>
-                  _buildDailyItem(activeData[index]),
-            ),
+      child: ListView.separated(
+        physics: const NeverScrollableScrollPhysics(),
+        shrinkWrap: true,
+        addRepaintBoundaries: true, // GPU Optimization
+        itemCount: activeData.length,
+        separatorBuilder: (context, index) => Divider(
+          color: SoftColors.textSecondary.withValues(alpha: 0.1),
+          height: 1,
+        ),
+        itemBuilder: (context, index) => _DailyReportItem(
+          item: activeData[index],
+          isYearlyMode:
+              range == ReportTimeRange.yearly ||
+              range == ReportTimeRange.allTime,
+        ),
+      ),
     );
   }
+}
 
-  Widget _buildMonthlyView(BuildContext context, List<DailyData> data) {
-    final Map<int, List<DailyData>> weeks = {};
-    for (var item in data) {
-      final weekNum = ((item.date.day - 1) ~/ 7) + 1;
-      weeks.putIfAbsent(weekNum, () => []).add(item);
-    }
+// Extracted Daily Item Widget
+class _DailyReportItem extends StatelessWidget {
+  final DailyData item;
+  final bool isYearlyMode;
 
-    // Sort weeks based on preference
-    final sortedWeeks = weeks.keys.toList();
-    sortedWeeks.sort((a, b) => isDescending ? b.compareTo(a) : a.compareTo(b));
+  const _DailyReportItem({required this.item, required this.isYearlyMode});
 
-    return Column(
-      children: sortedWeeks.map((weekNum) {
-        final days = weeks[weekNum]!;
-        // Sort days within week based on preference
-        days.sort(
-          (a, b) => isDescending
-              ? b.date.compareTo(a.date)
-              : a.date.compareTo(b.date),
-        );
-
-        final totalRevenue = days.fold<double>(0, (p, c) => p + c.revenue);
-        // Be careful with min/max if sorted descending, first is max, last is min.
-        // It's safer to recalculate explicitly or check sorting.
-        DateTime minDate = days
-            .map((e) => e.date)
-            .reduce((a, b) => a.isBefore(b) ? a : b);
-        DateTime maxDate = days
-            .map((e) => e.date)
-            .reduce((a, b) => a.isAfter(b) ? a : b);
-
-        final rangeLabel =
-            "${DateFormat('MMM d').format(minDate)} - ${DateFormat('MMM d').format(maxDate)}";
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          elevation: 0,
-          color: SoftColors.bgLight.withValues(alpha: 0.3),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              tilePadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              title: Row(
-                children: [
-                  Text(
-                    "Week $weekNum",
-                    style: GoogleFonts.outfit(
-                      fontWeight: FontWeight.bold,
-                      color: SoftColors.textMain,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    rangeLabel,
-                    style: GoogleFonts.outfit(
-                      color: SoftColors.textSecondary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-              subtitle: Text(
-                "\$${totalRevenue.toStringAsFixed(2)} Revenue",
-                style: GoogleFonts.outfit(
-                  color: SoftColors.brandPrimary,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                ),
-              ),
-              children: days.map((day) => _buildDailyItem(day)).toList(),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildDailyItem(DailyData item) {
+  @override
+  Widget build(BuildContext context) {
     final isZeroRevenue = item.revenue == 0;
     String topLabel = "";
     String mainLabel = "";
@@ -846,7 +983,7 @@ class _SalesAnalysisList extends StatelessWidget {
     final itemDate = DateTime(item.date.year, item.date.month, item.date.day);
     final isToday = itemDate == today;
 
-    if (range == ReportTimeRange.yearly || range == ReportTimeRange.allTime) {
+    if (isYearlyMode) {
       topLabel = DateFormat('y').format(item.date);
       mainLabel = DateFormat('MMM').format(item.date);
     } else {

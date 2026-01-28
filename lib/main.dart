@@ -12,6 +12,7 @@ void main() async {
 
   try {
     // If you haven't run flutterfire configure, this will throw
+    // Prevent duplicate initialization on hot restart
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,

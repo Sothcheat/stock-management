@@ -7,6 +7,7 @@ import '../../auth/domain/user_model.dart';
 import '../../auth/data/providers/auth_providers.dart';
 import '../../reports/data/reports_repository.dart';
 import '../../reports/domain/daily_summary.dart';
+import '../../../../core/utils/date_utils.dart';
 
 // 1. Dashboard View State (Today/Weekly)
 enum DashboardViewType { today, weekly }
@@ -93,11 +94,26 @@ final dashboardMetricsProvider = Provider<DashboardMetrics>((ref) {
         sales = todaySummary.totalRevenue;
         items = todaySummary.itemsSold;
       } else {
-        // Weekly: Sum last 7 days (the summaries list is already limit:7)
+        // Weekly: Sum standard week (Sun-Sat)
+        final startOfWeek = DateUtilsHelper.getStartOfWeek(now);
+        final endOfWeek = DateUtilsHelper.getEndOfWeek(now);
+
         for (var s in summaries) {
-          profit += s.totalProfit;
-          sales += s.totalRevenue;
-          items += s.itemsSold;
+          final date = DateTime.parse(s.date);
+          // Check if date is within start/end (inclusive)
+          // Start: Sunday 00:00
+          // End: Saturday 00:00
+          // We want to include Saturday data (which might have time or just date string "YYYY-MM-DD" parsed to 00:00)
+          // If parsed from YYYY-MM-DD, it is 00:00.
+          // range: >= start && <= end
+          if ((date.isAtSameMomentAs(startOfWeek) ||
+                  date.isAfter(startOfWeek)) &&
+              (date.isAtSameMomentAs(endOfWeek) ||
+                  date.isBefore(endOfWeek.add(const Duration(days: 1))))) {
+            profit += s.totalProfit;
+            sales += s.totalRevenue;
+            items += s.itemsSold;
+          }
         }
       }
 

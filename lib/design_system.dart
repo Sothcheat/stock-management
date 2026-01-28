@@ -54,6 +54,7 @@ class SoftScaffold extends StatelessWidget {
   final Widget body;
   final Widget? floatingActionButton;
   final Widget? bottomNavigationBar;
+  final Widget? bottomSheet;
   final List<Widget>? actions;
   final bool showBack;
 
@@ -65,6 +66,7 @@ class SoftScaffold extends StatelessWidget {
     this.titleStyle,
     this.floatingActionButton,
     this.bottomNavigationBar,
+    this.bottomSheet, // Initialize
     this.actions,
     this.showBack = false,
   });
@@ -132,6 +134,7 @@ class SoftScaffold extends StatelessWidget {
       ),
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,
+      bottomSheet: bottomSheet, // Use
     );
   }
 }
