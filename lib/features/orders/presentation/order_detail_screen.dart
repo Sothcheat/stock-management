@@ -11,13 +11,13 @@ import '../../auth/domain/user_model.dart';
 import 'providers/order_history_controller.dart';
 
 class OrderDetailScreen extends ConsumerWidget {
-  final OrderModel order;
-  const OrderDetailScreen({super.key, required this.order});
+  final String orderId;
+  const OrderDetailScreen({super.key, required this.orderId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Fix: Use specific order stream to avoid "Order not found" when order is not in Active Stream
-    final orderAsync = ref.watch(orderStreamProvider(order.id));
+    final orderAsync = ref.watch(orderStreamProvider(orderId));
     final userProfileAsync = ref.watch(currentUserProfileProvider);
 
     // Security: Wait for user profile to load to prevent showing Owner data to Employees
@@ -46,7 +46,7 @@ class OrderDetailScreen extends ConsumerWidget {
             if (!isEmployee) ...[
               BounceButton(
                 onTap: () async {
-                  final confirm = await showDialog<bool>(
+                  final confirm = await showSoftDialog<bool>(
                     context: context,
                     builder: (c) => AlertDialog(
                       backgroundColor: SoftColors.surface,
@@ -92,7 +92,7 @@ class OrderDetailScreen extends ConsumerWidget {
                     ref
                         .read(
                           orderHistoryProvider(
-                            isArchived: currentOrder.isArchived,
+                            currentOrder.isArchived,
                           ).notifier,
                         )
                         .removeOrderLocally(currentOrder.id);
@@ -113,7 +113,6 @@ class OrderDetailScreen extends ConsumerWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 24),
             ],
           ],
           body: SingleChildScrollView(
@@ -377,8 +376,8 @@ class OrderDetailScreen extends ConsumerWidget {
                         ),
                       ),
                       backgroundColor: SoftColors.background,
-                      collapsedBackgroundColor: SoftColors.textMain.withOpacity(
-                        0.05,
+                      collapsedBackgroundColor: SoftColors.textMain.withValues(
+                        alpha: 0.05,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -461,7 +460,9 @@ class OrderDetailScreen extends ConsumerWidget {
                                 Container(
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
-                                    color: SoftColors.warning.withOpacity(0.1),
+                                    color: SoftColors.warning.withValues(
+                                      alpha: 0.1,
+                                    ),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Row(
@@ -585,7 +586,7 @@ class OrderDetailScreen extends ConsumerWidget {
                         ref
                             .read(
                               orderHistoryProvider(
-                                isArchived: updatedOrder.isArchived,
+                                updatedOrder.isArchived,
                               ).notifier,
                             )
                             .updateOrderLocally(updatedOrder);
@@ -617,7 +618,7 @@ class OrderDetailScreen extends ConsumerWidget {
                       ref
                           .read(
                             orderHistoryProvider(
-                              isArchived: updatedOrder.isArchived,
+                              updatedOrder.isArchived,
                             ).notifier,
                           )
                           .updateOrderLocally(updatedOrder);
@@ -682,6 +683,9 @@ class _StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     Color color;
     switch (status) {
+      case OrderStatus.reserved:
+        color = const Color(0xFF9333EA);
+        break;
       case OrderStatus.prepping:
         color = SoftColors.warning;
         break;
@@ -693,6 +697,9 @@ class _StatusBadge extends StatelessWidget {
         break;
       case OrderStatus.cancelled:
         color = SoftColors.error;
+        break;
+      case OrderStatus.voided:
+        color = SoftColors.textSecondary;
         break;
     }
 

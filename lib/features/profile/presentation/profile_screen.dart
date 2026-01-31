@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart'; // For HapticFeedback
 
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../design_system.dart';
+import '../../../../core/theme/app_theme.dart';
+import '../../../../core/theme/theme_controller.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/data/providers/auth_providers.dart';
 
@@ -12,6 +15,9 @@ class ProfileScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final userProfileAsync = ref.watch(currentUserProfileProvider);
+    final themeMode = ref.watch(themeControllerProvider);
+    final colors = context.softColors;
+    final isDark = themeMode == ThemeMode.dark;
 
     return SoftScaffold(
       title: 'Profile',
@@ -24,7 +30,7 @@ class ProfileScreen extends ConsumerWidget {
                 "User not found",
                 style: GoogleFonts.outfit(
                   fontSize: 18,
-                  color: SoftColors.textSecondary,
+                  color: colors.textSecondary,
                 ),
               ),
             );
@@ -38,15 +44,15 @@ class ProfileScreen extends ConsumerWidget {
                   width: 120,
                   height: 120,
                   decoration: BoxDecoration(
-                    color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                    color: colors.brandPrimary.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: SoftColors.brandPrimary.withValues(alpha: 0.2),
+                      color: colors.brandPrimary.withValues(alpha: 0.2),
                       width: 4,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: SoftColors.brandPrimary.withValues(alpha: 0.15),
+                        color: colors.brandPrimary.withValues(alpha: 0.15),
                         blurRadius: 20,
                         offset: const Offset(0, 10),
                       ),
@@ -58,7 +64,7 @@ class ProfileScreen extends ConsumerWidget {
                       style: GoogleFonts.outfit(
                         fontSize: 48,
                         fontWeight: FontWeight.bold,
-                        color: SoftColors.brandPrimary,
+                        color: colors.brandPrimary,
                       ),
                     ),
                   ),
@@ -71,7 +77,7 @@ class ProfileScreen extends ConsumerWidget {
                   style: GoogleFonts.outfit(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    color: SoftColors.textMain,
+                    color: colors.textMain,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -81,7 +87,7 @@ class ProfileScreen extends ConsumerWidget {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: SoftColors.textSecondary.withValues(alpha: 0.1),
+                    color: colors.textSecondary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
@@ -90,7 +96,7 @@ class ProfileScreen extends ConsumerWidget {
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.5,
                       fontSize: 12,
-                      color: SoftColors.textSecondary,
+                      color: colors.textSecondary,
                     ),
                   ),
                 ),
@@ -110,9 +116,7 @@ class ProfileScreen extends ConsumerWidget {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         child: Divider(
-                          color: SoftColors.textSecondary.withValues(
-                            alpha: 0.1,
-                          ),
+                          color: colors.textSecondary.withValues(alpha: 0.1),
                           height: 1,
                         ),
                       ),
@@ -138,17 +142,107 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                 ),
 
+                const SizedBox(height: 24),
+
+                // Theme Toggle
+                SoftCard(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: colors.bgLight,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          isDark
+                              ? Icons.dark_mode_rounded
+                              : Icons.light_mode_rounded,
+                          color: colors.brandPrimary,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          "Dark Mode",
+                          style: GoogleFonts.outfit(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textMain,
+                          ),
+                        ),
+                      ),
+                      Switch(
+                        value: isDark,
+                        activeTrackColor: colors.brandPrimary,
+                        onChanged: (val) {
+                          HapticFeedback.selectionClick();
+                          ref
+                              .read(themeControllerProvider.notifier)
+                              .setThemeMode(
+                                val ? ThemeMode.dark : ThemeMode.light,
+                              );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: 48),
 
                 // Logout Button
                 SoftButton(
                   label: "Sign Out",
                   icon: Icons.logout_rounded,
-                  backgroundColor: SoftColors.error.withValues(alpha: 0.9),
+                  backgroundColor: colors.error.withValues(alpha: 0.9),
                   textColor: Colors.white,
-                  onTap: () async {
-                    await ref.read(authRepositoryProvider).signOut();
-                    // Router should handle redirect via authStateChanges
+                  onTap: () {
+                    showSoftDialog(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        backgroundColor: colors.surface,
+                        title: Text(
+                          "Sign Out",
+                          style: GoogleFonts.outfit(
+                            fontWeight: FontWeight.bold,
+                            color: colors.textMain,
+                          ),
+                        ),
+                        content: Text(
+                          "Are you sure you want to sign out?",
+                          style: GoogleFonts.outfit(color: colors.textMain),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: Text(
+                              "Cancel",
+                              style: GoogleFonts.outfit(
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              Navigator.pop(context); // Close dialog
+                              await ref.read(authRepositoryProvider).signOut();
+                            },
+                            child: Text(
+                              "Sign Out",
+                              style: GoogleFonts.outfit(
+                                color: colors.error,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
                   },
                 ),
               ],
@@ -175,15 +269,17 @@ class _ProfileItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.softColors;
+
     return Row(
       children: [
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: SoftColors.bgLight,
+            color: colors.bgLight,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(icon, color: SoftColors.textSecondary, size: 24),
+          child: Icon(icon, color: colors.textSecondary, size: 24),
         ),
         const SizedBox(width: 20),
         Expanded(
@@ -194,7 +290,7 @@ class _ProfileItem extends StatelessWidget {
                 title,
                 style: GoogleFonts.outfit(
                   fontSize: 12,
-                  color: SoftColors.textSecondary,
+                  color: colors.textSecondary,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -203,7 +299,7 @@ class _ProfileItem extends StatelessWidget {
                 style: GoogleFonts.outfit(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: SoftColors.textMain,
+                  color: colors.textMain,
                 ),
               ),
             ],

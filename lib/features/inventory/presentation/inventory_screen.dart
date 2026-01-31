@@ -561,6 +561,7 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                           selected: isSelected,
                           onSelected: (selected) {
                             if (selected) {
+                              HapticFeedback.lightImpact();
                               ref
                                   .read(inventoryFilterProvider.notifier)
                                   .selectCategory(isAll ? null : cat.id);
@@ -713,23 +714,9 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
               data: (products) {
                 if (products.isEmpty) {
                   return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.inventory_2_outlined,
-                          size: 60,
-                          color: SoftColors.textSecondary,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          "No products found",
-                          style: GoogleFonts.outfit(
-                            fontSize: 18,
-                            color: SoftColors.textSecondary,
-                          ),
-                        ),
-                      ],
+                    child: SoftAnimatedEmpty(
+                      icon: Icons.inventory_2_outlined,
+                      message: 'No products found',
                     ),
                   );
                 }
@@ -745,11 +732,14 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
                   itemCount: products.length,
                   itemBuilder: (context, index) {
                     final product = products[index];
-                    return _ProductCard(product: product);
+                    return SoftFadeInSlide(
+                      index: index,
+                      child: _ProductCard(product: product),
+                    );
                   },
                 );
               },
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => Center(child: SoftShimmer.productCard()),
               error: (e, s) => Center(child: Text("Error: $e")),
             ),
           ),

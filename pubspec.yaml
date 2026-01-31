@@ -60,6 +60,7 @@ dependencies:
   image_cropper: ^11.0.0
   syncfusion_flutter_charts: ^32.1.24
   sticky_headers: ^0.3.0+2
+  shared_preferences: ^2.5.4
 dev_dependencies:
   flutter_test:
     sdk: flutter

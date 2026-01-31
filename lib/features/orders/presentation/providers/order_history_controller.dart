@@ -1,28 +1,40 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../data/firebase_orders_repository.dart';
 import '../../domain/order.dart';
+import '../../../../core/utils/logger.dart';
 
-part 'order_history_controller.g.dart';
+// Manual Provider
+final orderHistoryProvider =
+    AsyncNotifierProvider.family<OrderHistory, OrderHistoryState, bool>(() {
+      return OrderHistory();
+    });
+
+final voidedOrdersCountProvider = StreamProvider<int>((ref) {
+  return ref.watch(ordersRepositoryProvider).watchVoidedCount();
+});
 
 class OrderHistoryState {
   final List<OrderModel> orders;
   final bool isLoadingMore;
   final bool hasMore;
-  final DocumentSnapshot? lastDoc;
+  final Object? lastDoc; // Opaque cursor
   final DateTimeRange? dateRange;
   final String? statusFilter;
   final OrderType? typeFilter;
-  final bool isLoadingInitial; // Restored
   final bool isSelectionMode;
   final Set<String> selectedIds;
   final bool isArchived;
-  final String? errorMessage;
   final double totalRevenue;
   final int totalItems;
+
+  // New Filters
+  final bool filterVoided; // Default false (Show Active)
+  final bool filterHasNotes; // Default false (Show All)
 
   OrderHistoryState({
     required this.orders,
@@ -32,333 +44,465 @@ class OrderHistoryState {
     this.dateRange,
     this.statusFilter,
     this.typeFilter,
-    this.isLoadingInitial = false,
     this.isSelectionMode = false,
     this.selectedIds = const {},
     this.isArchived = false,
-    this.errorMessage,
     this.totalRevenue = 0.0,
     this.totalItems = 0,
+    this.filterVoided = false,
+    this.filterHasNotes = false,
   });
 
   OrderHistoryState copyWith({
     List<OrderModel>? orders,
     bool? isLoadingMore,
     bool? hasMore,
-    DocumentSnapshot? lastDoc,
+    Object? lastDoc, // Opaque
     DateTimeRange? dateRange,
+    bool clearDateRange = false,
     String? statusFilter,
+    bool clearStatusFilter = false,
     OrderType? typeFilter,
-    bool? isLoadingInitial,
+    bool clearTypeFilter = false,
     bool? isSelectionMode,
     Set<String>? selectedIds,
     bool? isArchived,
-    String? errorMessage,
     double? totalRevenue,
     int? totalItems,
+    bool? filterVoided,
+    bool? filterHasNotes,
   }) {
     return OrderHistoryState(
       orders: orders ?? this.orders,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
       lastDoc: lastDoc ?? this.lastDoc,
-      dateRange: dateRange ?? this.dateRange,
-      statusFilter: statusFilter ?? this.statusFilter,
-      typeFilter: typeFilter ?? this.typeFilter,
-      isLoadingInitial: isLoadingInitial ?? this.isLoadingInitial,
+      dateRange: clearDateRange ? null : (dateRange ?? this.dateRange),
+      statusFilter: clearStatusFilter
+          ? null
+          : (statusFilter ?? this.statusFilter),
+      typeFilter: clearTypeFilter ? null : (typeFilter ?? this.typeFilter),
       isSelectionMode: isSelectionMode ?? this.isSelectionMode,
       selectedIds: selectedIds ?? this.selectedIds,
       isArchived: isArchived ?? this.isArchived,
-      errorMessage: errorMessage ?? this.errorMessage,
       totalRevenue: totalRevenue ?? this.totalRevenue,
       totalItems: totalItems ?? this.totalItems,
+      filterVoided: filterVoided ?? this.filterVoided,
+      filterHasNotes: filterHasNotes ?? this.filterHasNotes,
     );
   }
 }
 
-// KeepAlive to preserve state when switching tabs
-@Riverpod(keepAlive: true)
-class OrderHistory extends _$OrderHistory {
+class OrderHistory extends FamilyAsyncNotifier<OrderHistoryState, bool> {
   @override
-  OrderHistoryState build({bool isArchived = false}) {
-    // Initial fetch - delayed to ensure provider is built
-    Future.microtask(() => _fetchOrders(isRefresh: true));
-    return OrderHistoryState(
-      orders: [],
-      isLoadingInitial: true,
-      hasMore: true,
-      isArchived: isArchived,
+  FutureOr<OrderHistoryState> build(bool isArchived) async {
+    // Keep provider alive
+    ref.keepAlive();
+
+    // Initial fetch
+    return _fetchOrdersInternal(
+      baseState: OrderHistoryState(
+        orders: [],
+        hasMore: true,
+        isArchived: isArchived,
+      ),
+      isRefresh: true,
     );
   }
 
   Future<void> refresh() async {
-    await _fetchOrders(isRefresh: true);
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      return _fetchOrdersInternal(
+        baseState: state.requireValue.copyWith(
+          orders: [],
+          lastDoc: null,
+          hasMore: true,
+          isLoadingMore: false,
+        ),
+        isRefresh: true,
+      );
+    });
   }
 
   Future<void> loadMore() async {
-    // Gatekeeper: Prevent multiple calls or calls when no more data
-    if (state.isLoadingMore || !state.hasMore) return;
+    final currentState = state.value;
+    if (currentState == null ||
+        currentState.isLoadingMore ||
+        !currentState.hasMore) {
+      return;
+    }
 
-    state = state.copyWith(isLoadingMore: true);
-    await _fetchOrders(isRefresh: false);
+    // Set loading more flag without triggering full AsyncLoading
+    state = AsyncValue.data(currentState.copyWith(isLoadingMore: true));
+
+    try {
+      final newState = await _fetchOrdersInternal(
+        baseState: currentState,
+        isRefresh: false,
+      );
+      state = AsyncValue.data(newState.copyWith(isLoadingMore: false));
+    } catch (e) {
+      // Keep old data but maybe show snackbar?
+      // Or set error? For load more, we usually usually just stop loading
+      state = AsyncValue.data(currentState.copyWith(isLoadingMore: false));
+      // Ideally expose error via a side effect or transient field,
+      // but strictly 'AsyncValue' handles error for the *whole* state.
+      Logger.error("Load more error: $e");
+    }
+  }
+
+  // --- Filter Methods ---
+
+  Future<void> toggleVoidFilter() async {
+    final currentState = state.requireValue;
+    final newValue = !currentState.filterVoided;
+
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      return _fetchOrdersInternal(
+        baseState: currentState.copyWith(
+          filterVoided: newValue,
+          orders: [],
+          hasMore: true,
+          lastDoc: null,
+          selectedIds: {},
+        ),
+        isRefresh: true,
+      );
+    });
+  }
+
+  Future<void> toggleNotesFilter() async {
+    final currentState = state.requireValue;
+    final newValue = !currentState.filterHasNotes;
+
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      return _fetchOrdersInternal(
+        baseState: currentState.copyWith(
+          filterHasNotes: newValue,
+          orders: [],
+          hasMore: true,
+          lastDoc: null,
+          selectedIds: {},
+        ),
+        isRefresh: true,
+      );
+    });
   }
 
   Future<void> setDateRange(DateTimeRange? range) async {
-    // Reset and Fetch using constructor to be safe
-    state = OrderHistoryState(
-      orders: [],
-      isLoadingInitial: true,
-      hasMore: true,
-      lastDoc: null,
-      dateRange: range,
-      typeFilter: state.typeFilter,
-      statusFilter: state.statusFilter,
-      isArchived: state.isArchived,
-    );
-    await _fetchOrders(isRefresh: true);
-  }
-
-  Future<void> setStatusFilter(String? status) async {
-    state = state.copyWith(
-      statusFilter: status,
-      orders: [],
-      lastDoc: null,
-      hasMore: true,
-      isLoadingInitial: true,
-    );
-    await _fetchOrders(isRefresh: true);
+    final currentState = state.requireValue;
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      return _fetchOrdersInternal(
+        baseState: currentState.copyWith(
+          orders: [],
+          hasMore: true,
+          lastDoc: null,
+          dateRange: range,
+        ),
+        isRefresh: true,
+      );
+    });
   }
 
   Future<void> setTypeFilter(OrderType? type) async {
-    debugPrint('DEBUG: Setting state to $type and resetting list');
-    // Force reset with loading state using constructor to correctly clear nullables
-    state = OrderHistoryState(
-      orders: [],
-      isLoadingInitial: true,
-      hasMore: true,
-      lastDoc: null,
-      typeFilter: type, // Explicitly passed (null or value)
-      statusFilter: state.statusFilter, // Preserve
-      dateRange: state.dateRange, // Preserve
-      isArchived: state.isArchived, // Preserve
-    );
+    final currentState = state.requireValue;
+    final newType = (currentState.typeFilter == type) ? null : type;
 
-    try {
-      await _fetchOrders(isRefresh: true);
-    } catch (e) {
-      debugPrint('DEBUG ERROR in setTypeFilter: $e');
-      state = state.copyWith(
-        isLoadingInitial: false,
-        errorMessage: 'Failed to load orders: ${e.toString()}',
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      return _fetchOrdersInternal(
+        baseState: currentState.copyWith(
+          orders: [],
+          hasMore: true,
+          lastDoc: null,
+          typeFilter: newType,
+          clearTypeFilter: newType == null,
+        ),
+        isRefresh: true,
       );
-    }
+    });
   }
 
   Future<void> clearDateRange() async {
-    debugPrint("DEBUG: clearDateRange called");
-    state = OrderHistoryState(
-      orders: [],
-      isLoadingInitial: true,
-      hasMore: true,
-      lastDoc: null,
-      dateRange: null, // Explicitly null
-      typeFilter: state.typeFilter,
-      statusFilter: state.statusFilter,
-      isArchived: state.isArchived,
+    final currentState = state.requireValue;
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      return _fetchOrdersInternal(
+        baseState: currentState.copyWith(
+          orders: [],
+          hasMore: true,
+          lastDoc: null,
+          clearDateRange: true,
+        ),
+        isRefresh: true,
+      );
+    });
+  }
+
+  Future<OrderHistoryState> _fetchOrdersInternal({
+    required OrderHistoryState baseState,
+    required bool isRefresh,
+  }) async {
+    final repo = ref.read(ordersRepositoryProvider);
+
+    final currentOrders = isRefresh ? <OrderModel>[] : baseState.orders;
+    final startAfter = isRefresh ? null : baseState.lastDoc;
+    final limit = 20;
+
+    final effectiveDateRange = baseState.filterVoided
+        ? null
+        : baseState.dateRange;
+    final effectiveStatusFilter = baseState.filterVoided
+        ? null
+        : baseState.statusFilter;
+    final effectiveTypeFilter = baseState.filterVoided
+        ? null
+        : baseState.typeFilter;
+
+    final rawOrders = await repo.getOrdersHistory(
+      limit: limit + 10,
+      startAfter: startAfter,
+      dateRange: effectiveDateRange,
+      statusFilter: effectiveStatusFilter,
+      typeFilter: effectiveTypeFilter,
+      isArchived: baseState.isArchived,
+      filterVoided: baseState.filterVoided,
     );
-    await _fetchOrders(isRefresh: true);
+
+    final filteredOrders = rawOrders.where((order) {
+      if (baseState.filterVoided) {
+        if (!order.isVoided) return false;
+      } else {
+        if (order.isVoided) return false;
+      }
+      if (baseState.filterHasNotes) {
+        if (order.note == null || order.note!.isEmpty) return false;
+      }
+      return true;
+    }).toList();
+
+    final hasMore = rawOrders.length >= limit;
+    final updatedList = [...currentOrders, ...filteredOrders];
+    final lastDoc = rawOrders.isNotEmpty ? rawOrders.last.snapshot : null;
+
+    final totals = _calculateTotals(updatedList);
+
+    return baseState.copyWith(
+      orders: updatedList,
+      hasMore: hasMore,
+      lastDoc: lastDoc ?? baseState.lastDoc,
+      totalRevenue: totals.revenue,
+      totalItems: totals.items,
+    );
   }
 
-  Future<void> _fetchOrders({required bool isRefresh}) async {
-    try {
-      final repo = ref.read(ordersRepositoryProvider);
-
-      final currentOrders = isRefresh ? <OrderModel>[] : state.orders;
-      final startAfter = isRefresh ? null : state.lastDoc;
-      final limit = 20;
-
-      final newOrders = await repo.getOrdersHistory(
-        limit: limit,
-        startAfter: startAfter,
-        dateRange: state.dateRange,
-        statusFilter: state.statusFilter,
-        typeFilter: state.typeFilter,
-        isArchived: state.isArchived,
-      );
-
-      if (newOrders.isEmpty) {
-        state = state.copyWith(
-          hasMore: false,
-          // If refresh and empty, orders is empty list
-          orders: isRefresh ? [] : state.orders,
-        );
-        return;
-      }
-
-      final hasMore = newOrders.length == limit;
-      final updatedList = [...currentOrders, ...newOrders];
-      final lastDoc = newOrders.last.snapshot;
-
-      // Calculate totals
-      double newRevenue = 0;
-      int newItems = 0;
-      for (final order in updatedList) {
-        newRevenue += order.totalRevenue;
-        for (final item in order.items) {
-          newItems += item.quantity;
-        }
-      }
-
-      state = state.copyWith(
-        orders: updatedList,
-        hasMore: hasMore,
-        lastDoc: lastDoc ?? state.lastDoc,
-        totalRevenue: newRevenue,
-        totalItems: newItems,
-      );
-    } catch (e) {
-      debugPrint("OrderHistory Error: $e");
-      state = state.copyWith(
-        errorMessage: 'Error loading orders: ${e.toString()}',
-      );
-    } finally {
-      state = state.copyWith(isLoadingMore: false, isLoadingInitial: false);
-    }
-  }
-
-  void removeOrderLocally(String orderId) {
-    if (state.orders.isEmpty) return;
-    final updatedList = state.orders.where((o) => o.id != orderId).toList();
-
-    // Recalculate totals
+  // Helper
+  ({double revenue, int items}) _calculateTotals(List<OrderModel> list) {
     double newRevenue = 0;
     int newItems = 0;
-    for (final order in updatedList) {
+    for (final order in list) {
+      if (order.isVoided) continue;
       newRevenue += order.totalRevenue;
       for (final item in order.items) {
         newItems += item.quantity;
       }
     }
-
-    state = state.copyWith(
-      orders: updatedList,
-      totalRevenue: newRevenue,
-      totalItems: newItems,
-    );
+    return (revenue: newRevenue, items: newItems);
   }
 
-  void updateOrderLocally(OrderModel updatedOrder) {
-    if (state.orders.isEmpty) return;
-    final index = state.orders.indexWhere((o) => o.id == updatedOrder.id);
-    if (index != -1) {
-      final updatedList = List<OrderModel>.from(state.orders);
-      updatedList[index] = updatedOrder;
-      state = state.copyWith(orders: updatedList);
-    }
-  }
-
-  void addOrderLocally(OrderModel order) {
-    final updatedList = [order, ...state.orders];
-    state = state.copyWith(orders: updatedList);
-  }
-
-  // --- Selection Mode & Data Lifecycle ---
+  // --- Selection & Local Actions ---
 
   void toggleSelectionMode() {
-    final newMode = !state.isSelectionMode;
-    state = state.copyWith(
-      isSelectionMode: newMode,
-      selectedIds: newMode ? {} : {}, // Clear on exit
+    final current = state.requireValue;
+    final newMode = !current.isSelectionMode;
+    state = AsyncValue.data(
+      current.copyWith(isSelectionMode: newMode, selectedIds: {}),
     );
-    if (newMode) {
-      HapticFeedback.mediumImpact(); // Ignition Logic
-    }
+    if (newMode) HapticFeedback.mediumImpact();
+  }
+
+  void enterSelectionModeWithId(String id) {
+    if (state.requireValue.isSelectionMode) return;
+    state = AsyncValue.data(
+      state.requireValue.copyWith(isSelectionMode: true, selectedIds: {id}),
+    );
+    HapticFeedback.mediumImpact();
   }
 
   void toggleOrderSelection(String orderId) {
-    if (!state.isSelectionMode) return;
-    final currentIds = Set<String>.from(state.selectedIds);
+    final current = state.requireValue;
+    if (!current.isSelectionMode) return;
+    final currentIds = Set<String>.from(current.selectedIds);
     if (currentIds.contains(orderId)) {
       currentIds.remove(orderId);
     } else {
       currentIds.add(orderId);
     }
-    state = state.copyWith(selectedIds: currentIds);
+    state = AsyncValue.data(current.copyWith(selectedIds: currentIds));
     HapticFeedback.selectionClick();
   }
 
   void selectAll() {
-    if (state.orders.isEmpty) return;
-    final allIds = state.orders.map((e) => e.id).toSet();
-    state = state.copyWith(selectedIds: allIds);
+    final current = state.requireValue;
+    if (current.orders.isEmpty) return;
+    final allIds = current.orders.map((e) => e.id).toSet();
+    state = AsyncValue.data(current.copyWith(selectedIds: allIds));
     HapticFeedback.mediumImpact();
   }
 
   void clearSelection() {
-    state = state.copyWith(selectedIds: {});
+    state = AsyncValue.data(state.requireValue.copyWith(selectedIds: {}));
   }
 
-  // Bulk Actions
+  // --- ACTIONS ---
+
+  Future<void> executeVoidOrder(String orderId) async {
+    try {
+      await ref.read(ordersRepositoryProvider).voidOrder(orderId);
+      final current = state.value;
+      if (current != null) {
+        final idx = current.orders.indexWhere((o) => o.id == orderId);
+        if (idx != -1) {
+          final updated = current.orders[idx].copyWith(
+            isVoided: true,
+            status: OrderStatus.cancelled,
+          );
+          updateOrderLocally(updated);
+        }
+      }
+    } catch (e) {
+      Logger.error("Void Order Failed: $e");
+      // Could set transient error here if we had a mechanism
+    }
+  }
+
+  Future<void> executePurgeOrder(String orderId) async {
+    try {
+      await ref.read(ordersRepositoryProvider).permanentPurgeOrder(orderId);
+      removeOrderLocally(orderId);
+    } catch (e) {
+      Logger.error("Purge Order Failed: $e");
+    }
+  }
+
   Future<void> executeBulkArchive(bool archive) async {
-    final ids = state.selectedIds.toList();
+    final current = state.requireValue;
+    final ids = current.selectedIds.toList();
     if (ids.isEmpty) return;
 
     try {
       await ref.read(ordersRepositoryProvider).bulkArchive(ids, archive);
-
-      // Update Local State immediately
-      // Assuming we are in Main History (isArchived=false), archiving removes them.
-      // If we are in Archive (isArchived=true) and un-archive (archive=false), removes them.
-      // So in both cases, we remove from current list filter.
-
-      final updatedList = state.orders
+      final updatedList = current.orders
           .where((o) => !ids.contains(o.id))
           .toList();
-      state = state.copyWith(
-        orders: updatedList,
-        isSelectionMode: false,
-        selectedIds: {},
+      final totals = _calculateTotals(updatedList);
+
+      state = AsyncValue.data(
+        current.copyWith(
+          orders: updatedList,
+          isSelectionMode: false,
+          selectedIds: {},
+          totalRevenue: totals.revenue,
+          totalItems: totals.items,
+        ),
       );
     } catch (e) {
-      debugPrint("Bulk Archive Failed: $e");
+      Logger.error("Bulk Archive Failed: $e");
+    }
+  }
+
+  Future<void> executeBulkVoid() async {
+    final current = state.requireValue;
+    final ids = current.selectedIds.toList();
+    if (ids.isEmpty) return;
+
+    try {
+      for (final id in ids) {
+        await ref.read(ordersRepositoryProvider).voidOrder(id);
+      }
+      await refresh(); // Refresh to get correct voided state
+      toggleSelectionMode();
+    } catch (e) {
+      Logger.error("Bulk Void Failed");
     }
   }
 
   Future<void> executeBulkPurge() async {
-    final ids = state.selectedIds.toList();
+    final current = state.requireValue;
+    final ids = current.selectedIds.toList();
     if (ids.isEmpty) return;
-
     try {
       await ref.read(ordersRepositoryProvider).bulkPurge(ids);
-      final updatedList = state.orders
+      final updatedList = current.orders
           .where((o) => !ids.contains(o.id))
           .toList();
-      state = state.copyWith(
-        orders: updatedList,
-        isSelectionMode: false,
-        selectedIds: {},
+      final totals = _calculateTotals(updatedList);
+      state = AsyncValue.data(
+        current.copyWith(
+          orders: updatedList,
+          isSelectionMode: false,
+          selectedIds: {},
+          totalRevenue: totals.revenue,
+          totalItems: totals.items,
+        ),
       );
     } catch (e) {
-      debugPrint("Bulk Purge Failed: $e");
+      Logger.error("Bulk Purge Failed");
     }
   }
 
-  Future<void> executeBulkDelete() async {
-    final ids = state.selectedIds.toList();
-    if (ids.isEmpty) return;
-
-    try {
-      await ref.read(ordersRepositoryProvider).bulkDelete(ids);
-      final updatedList = state.orders
-          .where((o) => !ids.contains(o.id))
-          .toList();
-      state = state.copyWith(
+  void removeOrderLocally(String orderId) {
+    final current = state.value;
+    if (current == null) return;
+    final updatedList = current.orders.where((o) => o.id != orderId).toList();
+    final totals = _calculateTotals(updatedList);
+    state = AsyncValue.data(
+      current.copyWith(
         orders: updatedList,
-        isSelectionMode: false,
-        selectedIds: {},
+        totalRevenue: totals.revenue,
+        totalItems: totals.items,
+      ),
+    );
+  }
+
+  void updateOrderLocally(OrderModel updatedOrder) {
+    final current = state.value;
+    if (current == null) return;
+    final index = current.orders.indexWhere((o) => o.id == updatedOrder.id);
+    if (index != -1) {
+      final updatedList = List<OrderModel>.from(current.orders);
+      if (!current.filterVoided && updatedOrder.isVoided) {
+        updatedList.removeAt(index);
+      } else {
+        updatedList[index] = updatedOrder;
+      }
+      final totals = _calculateTotals(updatedList);
+      state = AsyncValue.data(
+        current.copyWith(
+          orders: updatedList,
+          totalRevenue: totals.revenue,
+          totalItems: totals.items,
+        ),
       );
-    } catch (e) {
-      debugPrint("Bulk Delete Failed: $e");
     }
+  }
+
+  void addOrderLocally(OrderModel order) {
+    final current = state.value;
+    if (current == null) return;
+    if (order.isVoided && !current.filterVoided) return;
+    final updatedList = [order, ...current.orders];
+    final totals = _calculateTotals(updatedList);
+    state = AsyncValue.data(
+      current.copyWith(
+        orders: updatedList,
+        totalRevenue: totals.revenue,
+        totalItems: totals.items,
+      ),
+    );
   }
 }

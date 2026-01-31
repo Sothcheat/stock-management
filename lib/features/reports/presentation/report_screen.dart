@@ -16,35 +16,24 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../inventory/data/inventory_repository.dart';
 import '../../inventory/domain/product.dart';
 
-class ReportScreen extends ConsumerWidget {
+class ReportScreen extends ConsumerStatefulWidget {
   const ReportScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return const SoftScaffold(
-      title: 'Reports',
-      showBack: false,
-      body: _ReportContent(),
-    );
-  }
+  ConsumerState<ReportScreen> createState() => _ReportScreenState();
 }
 
-class _ReportContent extends ConsumerStatefulWidget {
-  const _ReportContent();
-
-  @override
-  ConsumerState<_ReportContent> createState() => _ReportContentState();
-}
-
-class _ReportContentState extends ConsumerState<_ReportContent> {
+class _ReportScreenState extends ConsumerState<ReportScreen> {
   ReportTimeRange _selectedRange = ReportTimeRange.weekly;
   DateTime _focusedDate = DateTime.now();
   bool _isDescending = true;
+  int _lastNavigationDirection = 1; // 1 = forward, -1 = backward
 
   void _navigate(int direction) {
     if (direction == 0) return;
     HapticFeedback.lightImpact();
     setState(() {
+      _lastNavigationDirection = direction;
       switch (_selectedRange) {
         case ReportTimeRange.weekly:
           _focusedDate = _focusedDate.add(Duration(days: 7 * direction));
@@ -131,10 +120,8 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Fetch Data based on Range
-    // Split Monthly (List<WeeklyGroup>) vs Others (List<DailyData>)
+    // 1. Fetch Data
     final isMonthly = _selectedRange == ReportTimeRange.monthly;
-
     AsyncValue<List<WeeklyGroup>>? monthlyAsync;
     AsyncValue<List<DailyData>>? dailyAsync;
 
@@ -147,35 +134,6 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
             : _selectedRange == ReportTimeRange.yearly
             ? yearlyReportProvider(_focusedDate)
             : allTimeReportProvider(_focusedDate),
-      );
-    }
-
-    // 2. Side Effect: Haptics
-    // 2. Side Effect: Haptics
-    if (isMonthly) {
-      ref.listen(monthlyReportProvider(_focusedDate), (previous, next) {
-        if (next.hasValue &&
-            !next.isLoading &&
-            previous?.value != null &&
-            previous!.value != next.value) {
-          HapticFeedback.lightImpact();
-        }
-      });
-    } else {
-      ref.listen(
-        _selectedRange == ReportTimeRange.weekly
-            ? weeklyReportProvider(_focusedDate)
-            : _selectedRange == ReportTimeRange.yearly
-            ? yearlyReportProvider(_focusedDate)
-            : allTimeReportProvider(_focusedDate),
-        (previous, next) {
-          if (next.hasValue &&
-              !next.isLoading &&
-              previous?.value != null &&
-              previous!.value != next.value) {
-            HapticFeedback.lightImpact();
-          }
-        },
       );
     }
 
@@ -198,14 +156,11 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
     } else if (_selectedRange == ReportTimeRange.yearly) {
       canGoForward = _focusedDate.year < now.year;
     }
-
     final showNavigation = _selectedRange != ReportTimeRange.allTime;
 
-    // 3. Extract Data & Unify for Graphs
-    // We need a uniform List<DailyData> for the Graph and Totals (unless we sum WeeklyGroups differently)
+    // Extract Data
     List<DailyData> flatDailyData = [];
     List<WeeklyGroup> monthlyGroups = [];
-
     bool isLoading = false;
     bool hasError = false;
 
@@ -213,12 +168,9 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
       isLoading = monthlyAsync?.isLoading ?? false;
       hasError = monthlyAsync?.hasError ?? false;
       monthlyGroups = monthlyAsync?.valueOrNull ?? [];
-
-      // Flatten for graph/totals usage if needed
       for (var group in monthlyGroups) {
         flatDailyData.addAll(group.days);
       }
-      // Sort flat data for graph consistency
       flatDailyData.sort((a, b) => b.date.compareTo(a.date));
     } else {
       isLoading = dailyAsync?.isLoading ?? false;
@@ -226,18 +178,14 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
       flatDailyData = dailyAsync?.valueOrNull ?? [];
     }
 
-    // Calculate Totals
+    // Totals
     double totalRevenue = 0;
     double totalProfit = 0;
-
-    // For Monthly, we can sum from groups or flat data.
-    // If we use flatData, it works for all cases.
     for (var s in flatDailyData) {
-      totalRevenue += s.revenue;
-      totalProfit += s.profit;
+      totalRevenue += s.revenue.clamp(0.0, double.infinity);
+      totalProfit += s.profit.clamp(0.0, double.infinity);
     }
 
-    // Unified Loading State
     final isInitialLoading =
         isLoading && flatDailyData.isEmpty && monthlyGroups.isEmpty;
     final isEmpty =
@@ -246,422 +194,295 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
         flatDailyData.isEmpty &&
         monthlyGroups.isEmpty;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 1. Time Range Selector
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
-          child: RepaintBoundary(
+    return SoftSliverScaffold(
+      title: 'Reports',
+      showBack: false,
+      slivers: [
+        // 1. Time Range Selector (Box)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: ReportTimeRange.values.map((range) {
+                  final isSelected = _selectedRange == range;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: BounceButton(
+                      onTap: () {
+                        if (!isSelected) {
+                          HapticFeedback.selectionClick();
+                          setState(() {
+                            _selectedRange = range;
+                          });
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? SoftColors.brandPrimary
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isSelected
+                                ? Colors.transparent
+                                : SoftColors.border,
+                          ),
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                    color: SoftColors.brandPrimary.withValues(
+                                      alpha: 0.3,
+                                    ),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ]
+                              : [],
+                        ),
+                        child: Text(
+                          _getRangeName(range),
+                          style: GoogleFonts.outfit(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isSelected
+                                ? Colors.white
+                                : SoftColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ),
+
+        // 2. Dashboards (Box)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: ReportTimeRange.values.map((range) {
-                        final isSelected = _selectedRange == range;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: BounceButton(
-                            onTap: () {
-                              if (!isSelected) {
-                                HapticFeedback.selectionClick();
-                                setState(() {
-                                  _selectedRange = range;
-                                });
-                              }
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? SoftColors.brandPrimary
-                                    : Colors.white,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: isSelected
-                                      ? Colors.transparent
-                                      : SoftColors.border,
-                                ),
-                                boxShadow: isSelected
-                                    ? [
-                                        BoxShadow(
-                                          color: SoftColors.brandPrimary
-                                              .withValues(alpha: 0.3),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ]
-                                    : [],
-                              ),
-                              child: Text(
-                                _getRangeName(range),
-                                style: GoogleFonts.outfit(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : SoftColors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                  child: _DashboardCard(
+                    title: "Total Revenue",
+                    amount: totalRevenue,
+                    icon: Icons.attach_money_rounded,
+                    color: SoftColors.brandPrimary,
                   ),
                 ),
-                // Live Indicator (Hidden per request)
-                /*
-              if (!isInitialLoading && !hasError)
-                Container(...)
-              */
+                const SizedBox(width: 16),
+                if (!isEmployee)
+                  Expanded(
+                    child: _DashboardCard(
+                      title: "Net Profit",
+                      amount: totalProfit,
+                      icon: Icons.trending_up_rounded,
+                      color: const Color(0xFFD6943C),
+                    ),
+                  ),
               ],
             ),
           ),
         ),
 
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 2. Dashboards (Persistent)
-                RepaintBoundary(
-                  child: Row(
+        const SliverPadding(padding: EdgeInsets.only(bottom: 24)),
+
+        // 3. Navigation Header (Pinned)
+        if (showNavigation)
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _ReportNavigationDelegate(
+              label: _getDateLabel(),
+              canGoForward: canGoForward,
+              navigationDirection: _lastNavigationDirection,
+              onNavigate: _navigate,
+              onReset: _resetToToday,
+              onSelectDate: _selectDate,
+              isToday:
+                  _focusedDate.year == now.year &&
+                  _focusedDate.month == now.month &&
+                  _focusedDate.day == now.day,
+            ),
+          ),
+
+        // 4. Content States
+        if (isInitialLoading)
+          SliverToBoxAdapter(
+            child: SoftListSwitcher(
+              direction: _lastNavigationDirection,
+              childKey: const ValueKey('loading'),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: const SoftShimmer.dailyRow(itemCount: 6),
+              ),
+            ),
+          )
+        else if (hasError)
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: Text("Error loading data")),
+          )
+        else if (isEmpty)
+          SliverToBoxAdapter(
+            child: SoftListSwitcher(
+              direction: _lastNavigationDirection,
+              childKey: const ValueKey('empty'),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(minHeight: 300),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(SoftColors.cardRadius),
+                    border: Border.all(color: SoftColors.border),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Expanded(
-                        child: _DashboardCard(
-                          title: "Total Revenue",
-                          amount: totalRevenue,
-                          icon: Icons.attach_money_rounded,
-                          color: SoftColors.brandPrimary,
+                      Icon(
+                        Icons.bar_chart_rounded,
+                        size: 48,
+                        color: SoftColors.textSecondary.withValues(alpha: 0.3),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        "No data for this period",
+                        style: GoogleFonts.outfit(
+                          color: SoftColors.textSecondary,
                         ),
                       ),
-                      const SizedBox(width: 16),
-                      if (!isEmployee)
-                        Expanded(
-                          child: _DashboardCard(
-                            title: "Net Profit",
-                            amount: totalProfit,
-                            icon: Icons.trending_up_rounded,
-                            color: const Color(0xFFD6943C),
-                          ),
-                        ),
                     ],
                   ),
                 ),
-
-                const SizedBox(height: 24),
-                // 3. Navigation Header (Moved BETWEEN Dashboard and List)
-                if (showNavigation)
-                  RepaintBoundary(
+              ),
+            ),
+          )
+        else ...[
+          // Header: Sales Analysis
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "Sales Analysis",
+                    style: GoogleFonts.outfit(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: SoftColors.textMain,
+                    ),
+                  ),
+                  BounceButton(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        _isDescending = !_isDescending;
+                      });
+                    },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          // Navigation Group
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              BounceButton(
-                                onTap: () => _navigate(-1),
-                                child: const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 8.0),
-                                  child: Icon(
-                                    Icons.chevron_left_rounded,
-                                    size: 28,
-                                    color: SoftColors.textMain,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _getDateLabel(),
-                                style: GoogleFonts.outfit(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: SoftColors.textMain,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              BounceButton(
-                                onTap: () {
-                                  if (canGoForward) _navigate(1);
-                                },
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Icon(
-                                    Icons.chevron_right_rounded,
-                                    size: 28,
-                                    color: canGoForward
-                                        ? SoftColors.textMain
-                                        : SoftColors.textSecondary.withValues(
-                                            alpha: 0.2,
-                                          ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          // Actions Group
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              BounceButton(
-                                onTap: _resetToToday,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        (_focusedDate.year ==
-                                                DateTime.now().year &&
-                                            _focusedDate.month ==
-                                                DateTime.now().month &&
-                                            _focusedDate.day ==
-                                                DateTime.now().day)
-                                        ? SoftColors.brandPrimary
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color:
-                                          (_focusedDate.year ==
-                                                  DateTime.now().year &&
-                                              _focusedDate.month ==
-                                                  DateTime.now().month &&
-                                              _focusedDate.day ==
-                                                  DateTime.now().day)
-                                          ? Colors.transparent
-                                          : SoftColors.brandPrimary.withValues(
-                                              alpha: 0.3,
-                                            ),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.today_rounded,
-                                        size: 14,
-                                        color:
-                                            (_focusedDate.year ==
-                                                    DateTime.now().year &&
-                                                _focusedDate.month ==
-                                                    DateTime.now().month &&
-                                                _focusedDate.day ==
-                                                    DateTime.now().day)
-                                            ? Colors.white
-                                            : SoftColors.brandPrimary,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        "Today",
-                                        style: GoogleFonts.outfit(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                          color:
-                                              (_focusedDate.year ==
-                                                      DateTime.now().year &&
-                                                  _focusedDate.month ==
-                                                      DateTime.now().month &&
-                                                  _focusedDate.day ==
-                                                      DateTime.now().day)
-                                              ? Colors.white
-                                              : SoftColors.brandPrimary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              BounceButton(
-                                onTap: () => _selectDate(),
-                                child: Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: SoftColors.bgLight,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.calendar_month_rounded,
-                                    size: 18,
-                                    color: SoftColors.textSecondary,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: SoftColors.bgLight,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        _isDescending
+                            ? Icons.sort_rounded
+                            : Icons.calendar_today_rounded,
+                        color: SoftColors.textSecondary,
+                        size: 18,
                       ),
                     ),
                   ),
-
-                const SizedBox(height: 16),
-
-                // 4. Content (List Based Only)
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 400),
-                  switchInCurve: Curves.easeInOutCubic,
-                  switchOutCurve: Curves.easeInOutCubic,
-
-                  transitionBuilder:
-                      (Widget child, Animation<double> animation) {
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(
-                                0.0,
-                                0.02,
-                              ), // Reduced slide dist (was 0.05)
-                              end: Offset.zero,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        );
-                      },
-                  child: isInitialLoading
-                      ? Container(
-                          key: const ValueKey('loading'),
-                          constraints: const BoxConstraints(minHeight: 400),
-                          child: const Center(
-                            child: CircularProgressIndicator(
-                              color: SoftColors.brandPrimary,
-                            ),
-                          ),
-                        )
-                      : hasError
-                      ? Container(
-                          key: const ValueKey('error'),
-                          constraints: const BoxConstraints(minHeight: 400),
-                          child: Center(child: Text("Error loading data")),
-                        )
-                      : isEmpty
-                      ? Container(
-                          key: const ValueKey('empty'),
-                          width: double.infinity,
-                          constraints: const BoxConstraints(minHeight: 400),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(
-                              SoftColors.cardRadius,
-                            ),
-                            border: Border.all(color: SoftColors.border),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.bar_chart_rounded,
-                                size: 48,
-                                color: SoftColors.textSecondary.withValues(
-                                  alpha: 0.3,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                "No data for this period",
-                                style: GoogleFonts.outfit(
-                                  color: SoftColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : RepaintBoundary(
-                          key: ValueKey(
-                            // Semantic Key for Animation Trigger
-                            'content-${_focusedDate.toString()}-${_selectedRange.toString()}',
-                          ),
-                          child: Column(
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    "Sales Analysis",
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                      color: SoftColors.textMain,
-                                    ),
-                                  ),
-                                  BounceButton(
-                                    onTap: () {
-                                      HapticFeedback.selectionClick();
-                                      setState(() {
-                                        _isDescending = !_isDescending;
-                                      });
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        color: SoftColors.bgLight,
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Icon(
-                                        _isDescending
-                                            ? Icons.sort_rounded
-                                            : Icons.calendar_today_rounded,
-                                        color: SoftColors.textSecondary,
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-
-                              // Conditional Monthly View vs Flat List
-                              if (isMonthly)
-                                _buildMonthlyView(context, monthlyGroups)
-                              else
-                                _SalesAnalysisList(
-                                  key: ValueKey("$_focusedDate-$_isDescending"),
-                                  data: flatDailyData,
-                                  range: _selectedRange,
-                                  isDescending: _isDescending,
-                                ),
-
-                              const SizedBox(height: 32),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    "Top Selling Products",
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                      color: SoftColors.textMain,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              _TopProductsList(summaries: flatDailyData),
-                              const SizedBox(height: 40),
-                            ],
-                          ),
-                        ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
+
+          // LIST: Monthly vs Daily
+          if (isMonthly)
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: SoftFadeInSlide(
+                    index: index,
+                    child: _buildMonthlyItem(context, monthlyGroups[index]),
+                  ),
+                );
+              }, childCount: monthlyGroups.length),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                // Sort Logic Inline or Pre-calc?
+                // Better to pre-calc.
+                final activeData = List<DailyData>.from(flatDailyData);
+                activeData.sort(
+                  (a, b) => _isDescending
+                      ? b.date.compareTo(a.date)
+                      : a.date.compareTo(b.date),
+                );
+                if (index >= activeData.length) return null;
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: SoftFadeInSlide(
+                    index: index,
+                    child: Column(
+                      children: [
+                        _DailyReportItem(
+                          item: activeData[index],
+                          isYearlyMode:
+                              _selectedRange == ReportTimeRange.yearly ||
+                              _selectedRange == ReportTimeRange.allTime,
+                        ),
+                        Divider(
+                          color: SoftColors.textSecondary.withValues(
+                            alpha: 0.1,
+                          ),
+                          height: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }, childCount: flatDailyData.length),
+            ),
+
+          const SliverPadding(padding: EdgeInsets.only(bottom: 32)),
+
+          // Header: Top Products
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                "Top Selling Products",
+                style: GoogleFonts.outfit(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: SoftColors.textMain,
+                ),
+              ),
+            ),
+          ),
+
+          const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
+
+          // Top Products List
+          _buildSliverTopProductsList(flatDailyData),
+        ],
       ],
     );
   }
@@ -679,174 +500,550 @@ class _ReportContentState extends ConsumerState<_ReportContent> {
     }
   }
 
-  Widget _buildMonthlyView(BuildContext context, List<WeeklyGroup> data) {
+  // Helper for Monthly Item (Ported from _buildMonthlyView logic)
+  Widget _buildMonthlyItem(BuildContext context, WeeklyGroup weekGroup) {
+    // ... (Implementation same as existing but returning single widget) ...
+    // Actually, standard ExpantionTile in SliverList is fine.
+    final start = weekGroup.weekStart;
+
+    int displayWeekNumber = DateUtilsHelper.getWeekOfYear(start);
+    if (displayWeekNumber > 52 && start.month == 1) {
+      displayWeekNumber = 1;
+    }
+
+    final isEmpty = weekGroup.totalRevenue == 0;
+    final contentOpacity = isEmpty ? 0.6 : 1.0;
+    final textColor = isEmpty ? SoftColors.textSecondary : SoftColors.textMain;
+    final secondaryTextColor = SoftColors.textSecondary;
+
+    final thumbnailColor = isEmpty
+        ? SoftColors.bgLight.withValues(alpha: 0.5)
+        : SoftColors.bgLight;
+
     return Column(
-      children: data.asMap().entries.map((entry) {
-        final weekGroup = entry.value;
-        final start = weekGroup.weekStart;
-
-        // Week Number Logic:
-        // Use the new strict yearly calculation.
-        // VISUAL FIX: If week number is > 52 (e.g. 53) and it's January, user might find it confusing.
-        // However, standard ISO weeks do go up to 53.
-        // But the user requested: "If Week > 52 (e.g. 53), label as 'Week 1' or 'Initial Week'".
-        // Let's stick to "Week 1" for simplicity in this context if it's the start of the year.
-        int displayWeekNumber = DateUtilsHelper.getWeekOfYear(start);
-        if (displayWeekNumber > 52 && start.month == 1) {
-          displayWeekNumber = 1;
-        }
-
-        final isEmpty = weekGroup.totalRevenue == 0;
-        final contentOpacity = isEmpty ? 0.7 : 1.0;
-        final textColor = isEmpty ? Colors.grey[400] : SoftColors.brandPrimary;
-        final secondaryTextColor = isEmpty
-            ? Colors.grey[400]
-            : SoftColors.textSecondary;
-
-        return Opacity(
+      children: [
+        Opacity(
           opacity: contentOpacity,
-          child: Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            elevation: 0,
-            color: Colors.white,
-            shape: RoundedRectangleBorder(
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.transparent,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Theme(
-                data: Theme.of(
-                  context,
-                ).copyWith(dividerColor: Colors.transparent),
-                child: ExpansionTile(
-                  enabled: !isEmpty, // Disable expansion if empty
-                  tilePadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12, // More vertical padding for taller card
-                  ),
-                  childrenPadding: const EdgeInsets.only(bottom: 12),
-                  // Custom Header Layout
-                  title: Row(
-                    children: [
-                      // 1. Thumbnail (Left)
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: isEmpty
-                              ? Colors.grey[100]
-                              : SoftColors.brandPrimary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              "W$displayWeekNumber",
+            child: Theme(
+              data: Theme.of(
+                context,
+              ).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                enabled: !isEmpty,
+                tilePadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                childrenPadding: const EdgeInsets.only(bottom: 12),
+                collapsedShape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                trailing: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: SoftColors.textSecondary.withValues(alpha: 0.5),
+                ),
+                title: Row(
+                  children: [
+                    Container(
+                      width: 60,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: thumbnailColor,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            "WEEK",
+                            style: GoogleFonts.outfit(
+                              color: secondaryTextColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              "$displayWeekNumber",
                               style: GoogleFonts.outfit(
                                 fontWeight: FontWeight.bold,
                                 color: textColor,
-                                fontSize: 14,
+                                fontSize: 16,
                               ),
                             ),
-                            Text(
-                              DateFormat('MMM').format(start),
-                              style: GoogleFonts.outfit(
-                                color: secondaryTextColor,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Revenue",
+                                style: GoogleFonts.outfit(
+                                  fontSize: 11,
+                                  color: secondaryTextColor.withValues(
+                                    alpha: 0.7,
+                                  ),
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 2),
+                              Text(
+                                isEmpty
+                                    ? "No Sales"
+                                    : "\$${weekGroup.totalRevenue.clamp(0.0, double.infinity).toStringAsFixed(2)}",
+                                style: GoogleFonts.outfit(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: isEmpty
+                                      ? SoftColors.textSecondary
+                                      : SoftColors.textMain,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                "Profit",
+                                style: GoogleFonts.outfit(
+                                  fontSize: 11,
+                                  color: secondaryTextColor.withValues(
+                                    alpha: 0.7,
+                                  ),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                isEmpty
+                                    ? "-"
+                                    : "${weekGroup.totalProfit >= 0 ? '+' : ''}\$${weekGroup.totalProfit.clamp(0.0, double.infinity).toStringAsFixed(2)}",
+                                style: GoogleFonts.outfit(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: isEmpty
+                                      ? SoftColors.textSecondary
+                                      : const Color(0xFFB8860B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                children: weekGroup.days.asMap().entries.map((entry) {
+                  return SoftFadeInSlide(
+                    index: entry.key,
+                    child: _DailyReportItem(
+                      item: entry.value,
+                      isYearlyMode: false,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ),
+        Divider(
+          color: SoftColors.textSecondary.withValues(alpha: 0.1),
+          height: 1,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSliverTopProductsList(List<DailyData> summaries) {
+    // 0. Live Inventory Bridge
+    final productsMapAsync = ref.watch(productsMapProvider);
+    final productsMap = productsMapAsync.valueOrNull ?? {};
+
+    // 1. Aggregate Data
+    final productStats = <String, _ProductStat>{};
+    for (var s in summaries) {
+      s.productRanking.forEach((key, qty) {
+        if (!productStats.containsKey(key)) {
+          productStats[key] = _ProductStat(
+            name: key,
+            totalQty: 0,
+            totalRevenue: 0,
+          );
+        }
+        productStats[key]!.totalQty += qty;
+      });
+    }
+
+    // 2. Sort Descending
+    final sortedStats = productStats.values.toList()
+      ..sort((a, b) => b.totalQty.compareTo(a.totalQty));
+
+    if (sortedStats.isEmpty) {
+      return SliverToBoxAdapter(
+        child: SoftAnimatedEmpty(
+          icon: Icons.shopping_cart_outlined,
+          message: 'No items sold in this period.',
+        ),
+      );
+    }
+
+    // 3. Logic: Top 5 + View All
+    final displayedStats = sortedStats.take(5).toList();
+    final maxQty = displayedStats.first.totalQty;
+    final showViewAll = sortedStats.length > 5;
+
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          if (index == displayedStats.length) {
+            // View All Button
+            if (showViewAll) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+                child: TextButton(
+                  onPressed: () =>
+                      _showAllProductsSheet(context, sortedStats, productsMap),
+                  style: TextButton.styleFrom(
+                    foregroundColor: SoftColors.brandPrimary,
+                    textStyle: GoogleFonts.outfit(fontWeight: FontWeight.bold),
+                  ),
+                  child: Text("View All ${sortedStats.length} Products"),
+                ),
+              );
+            }
+            return const SizedBox(height: 40);
+          }
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: SoftFadeInSlide(
+              index: index,
+              child: _ProductListItem(
+                stat: displayedStats[index],
+                maxQty: maxQty,
+                rank: index + 1,
+                product: productsMap[displayedStats[index].name],
+              ),
+            ),
+          );
+        },
+        childCount: displayedStats.length + 1, // +1 for Footer
+      ),
+    );
+  }
+
+  void _showAllProductsSheet(
+    BuildContext context,
+    List<_ProductStat> allStats,
+    Map<String, Product> productsMap,
+  ) {
+    final maxQty = allStats.first.totalQty;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (context, scrollController) {
+            return Column(
+              children: [
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 12, bottom: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "All Products",
+                        style: GoogleFonts.outfit(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: SoftColors.textMain,
                         ),
                       ),
-                      const SizedBox(width: 16),
-
-                      // 2. Data Columns (Center & Right)
-                      Expanded(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            // Revenue Column
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Revenue",
-                                  style: GoogleFonts.outfit(
-                                    fontSize: 12,
-                                    color: secondaryTextColor,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  "\$${weekGroup.totalRevenue.toStringAsFixed(2)}",
-                                  style: GoogleFonts.outfit(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: textColor,
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            // Profit Column
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  "Profit",
-                                  style: GoogleFonts.outfit(
-                                    fontSize: 12,
-                                    color: secondaryTextColor,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  "${weekGroup.totalProfit >= 0 ? '+' : ''}\$${weekGroup.totalProfit.toStringAsFixed(2)}",
-                                  style: GoogleFonts.outfit(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    // Gold color for profit if active, else gray
-                                    color: isEmpty
-                                        ? Colors.grey[400]
-                                        : const Color(0xFFB8860B),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
+                      Text(
+                        "${allStats.length} Items",
+                        style: GoogleFonts.outfit(
+                          color: SoftColors.textSecondary,
                         ),
                       ),
                     ],
                   ),
-                  // Remove default trailing icon or keep it? User didn't specify.
-                  // Default ExpansionTile has a chevron. It might look cluttered with the columns.
-                  // Let's keep it but maybe it pushes content?
-                  // With 'title' taking full width, 'trailing' is to the right of it.
-                  // Our Row is inside 'title'.
-                  // The data columns are Expanded, so they fill available space.
-                  // The chevron will appear after them. This is standard behavior.
-                  children: weekGroup.days.map((dayItem) {
-                    return _DailyReportItem(item: dayItem, isYearlyMode: false);
-                  }).toList(),
                 ),
+                const Divider(),
+                Expanded(
+                  child: ListView.separated(
+                    controller: scrollController,
+                    padding: const EdgeInsets.all(24),
+                    itemCount: allStats.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 24),
+                    itemBuilder: (context, index) {
+                      return _ProductListItem(
+                        stat: allStats[index],
+                        maxQty: maxQty,
+                        rank: index + 1,
+                        product: productsMap[allStats[index].name],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ReportNavigationDelegate extends SliverPersistentHeaderDelegate {
+  final String label;
+  final bool canGoForward;
+  final bool isToday;
+  final int navigationDirection; // 1 = forward, -1 = backward
+  final Function(int) onNavigate;
+  final VoidCallback onReset;
+  final VoidCallback onSelectDate;
+
+  _ReportNavigationDelegate({
+    required this.label,
+    required this.canGoForward,
+    required this.isToday,
+    required this.navigationDirection,
+    required this.onNavigate,
+    required this.onReset,
+    required this.onSelectDate,
+  });
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(
+      height: maxExtent,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      color: SoftColors
+          .background, // Match scaffold background (or white if needed for contrast)
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 0),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: SoftColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Navigation Group
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                BounceButton(
+                  onTap: () => onNavigate(-1),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(
+                      vertical: 8.0,
+                      horizontal: 12,
+                    ),
+                    child: Icon(
+                      Icons.chevron_left_rounded,
+                      size: 28,
+                      color: SoftColors.textMain,
+                    ),
+                  ),
+                ),
+                // Warp Date Label with AnimatedSwitcher
+                Container(
+                  constraints: const BoxConstraints(minWidth: 120),
+                  alignment: Alignment.center,
+                  child: RepaintBoundary(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      switchInCurve: Curves.easeInOutQuart,
+                      switchOutCurve: Curves.easeInOutQuart,
+                      transitionBuilder: (child, animation) {
+                        // Directional slide: forward=slides LEFT, backward=slides RIGHT
+                        final slideOffset = navigationDirection > 0
+                            ? Tween<Offset>(
+                                begin: const Offset(0.4, 0), // Enter from right
+                                end: Offset.zero,
+                              )
+                            : Tween<Offset>(
+                                begin: const Offset(-0.4, 0), // Enter from left
+                                end: Offset.zero,
+                              );
+
+                        return SlideTransition(
+                          position: slideOffset.animate(animation),
+                          child: FadeTransition(
+                            opacity: animation,
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Text(
+                        label,
+                        key: ValueKey<String>(label),
+                        style: GoogleFonts.outfit(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: SoftColors.textMain,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                BounceButton(
+                  onTap: () {
+                    if (canGoForward) onNavigate(1);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8.0,
+                      horizontal: 12,
+                    ),
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      size: 28,
+                      color: canGoForward
+                          ? SoftColors.textMain
+                          : SoftColors.textSecondary.withValues(alpha: 0.2),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            // Actions Group
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  BounceButton(
+                    onTap: onReset,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isToday
+                            ? SoftColors.brandPrimary
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: isToday
+                              ? Colors.transparent
+                              : SoftColors.brandPrimary.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.today_rounded,
+                            size: 14,
+                            color: isToday
+                                ? Colors.white
+                                : SoftColors.brandPrimary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            "Today",
+                            style: GoogleFonts.outfit(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: isToday
+                                  ? Colors.white
+                                  : SoftColors.brandPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  BounceButton(
+                    onTap: onSelectDate,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: const BoxDecoration(
+                        color: SoftColors.bgLight,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.calendar_month_rounded,
+                        size: 18,
+                        color: SoftColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        );
-      }).toList(),
+          ],
+        ),
+      ),
     );
+  }
+
+  @override
+  double get maxExtent => 72;
+
+  @override
+  double get minExtent => 72;
+
+  @override
+  bool shouldRebuild(covariant _ReportNavigationDelegate oldDelegate) {
+    return oldDelegate.label != label ||
+        oldDelegate.canGoForward != canGoForward ||
+        oldDelegate.isToday != isToday;
   }
 }
 
@@ -916,55 +1113,6 @@ class _DashboardCard extends StatelessWidget {
   }
 }
 
-// Renamed from _SalesList to _SalesAnalysisList
-class _SalesAnalysisList extends StatelessWidget {
-  final List<DailyData> data;
-  final ReportTimeRange range;
-  final bool isDescending;
-
-  const _SalesAnalysisList({
-    super.key,
-    required this.data,
-    required this.range,
-    required this.isDescending,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // 1. Sort Data
-    final activeData = List<DailyData>.from(data);
-    activeData.sort(
-      (a, b) =>
-          isDescending ? b.date.compareTo(a.date) : a.date.compareTo(b.date),
-    );
-
-    if (activeData.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    // Ensure min height to prevent jumps
-    return Container(
-      constraints: const BoxConstraints(minHeight: 400),
-      child: ListView.separated(
-        physics: const NeverScrollableScrollPhysics(),
-        shrinkWrap: true,
-        addRepaintBoundaries: true, // GPU Optimization
-        itemCount: activeData.length,
-        separatorBuilder: (context, index) => Divider(
-          color: SoftColors.textSecondary.withValues(alpha: 0.1),
-          height: 1,
-        ),
-        itemBuilder: (context, index) => _DailyReportItem(
-          item: activeData[index],
-          isYearlyMode:
-              range == ReportTimeRange.yearly ||
-              range == ReportTimeRange.allTime,
-        ),
-      ),
-    );
-  }
-}
-
 // Extracted Daily Item Widget
 class _DailyReportItem extends StatelessWidget {
   final DailyData item;
@@ -1028,7 +1176,7 @@ class _DailyReportItem extends StatelessWidget {
         : Colors.transparent;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
       decoration: BoxDecoration(
         color: rowBgColor,
@@ -1089,7 +1237,7 @@ class _DailyReportItem extends StatelessWidget {
                 Text(
                   isZeroRevenue
                       ? "No Sales"
-                      : "\$${item.revenue.toStringAsFixed(2)}",
+                      : "\$${item.revenue.clamp(0.0, double.infinity).toStringAsFixed(2)}",
                   style: GoogleFonts.outfit(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -1113,7 +1261,9 @@ class _DailyReportItem extends StatelessWidget {
               ),
               // VIBRANCY FIX: Solid accentPurple for profit
               Text(
-                isZeroRevenue ? "-" : "+\$${item.profit.toStringAsFixed(2)}",
+                isZeroRevenue
+                    ? "-"
+                    : "+\$${item.profit.clamp(0.0, double.infinity).toStringAsFixed(2)}",
                 style: GoogleFonts.outfit(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -1127,167 +1277,6 @@ class _DailyReportItem extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _TopProductsList extends ConsumerWidget {
-  final List<DailyData> summaries;
-
-  const _TopProductsList({required this.summaries});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // 0. Live Inventory Bridge
-    final productsMapAsync = ref.watch(productsMapProvider);
-    final productsMap = productsMapAsync.valueOrNull ?? {};
-
-    // 1. Aggregate Data
-    final productStats = <String, _ProductStat>{};
-    for (var s in summaries) {
-      s.productRanking.forEach((key, qty) {
-        if (!productStats.containsKey(key)) {
-          productStats[key] = _ProductStat(
-            name: key,
-            totalQty: 0,
-            totalRevenue: 0,
-          );
-        }
-        productStats[key]!.totalQty += qty;
-      });
-    }
-
-    // 2. Sort Descending
-    final sortedStats = productStats.values.toList()
-      ..sort((a, b) => b.totalQty.compareTo(a.totalQty));
-
-    if (sortedStats.isEmpty) {
-      return Center(
-        child: Text(
-          "No items sold in this period.",
-          style: GoogleFonts.outfit(color: SoftColors.textSecondary),
-        ),
-      );
-    }
-
-    // 3. Logic: Top 5 + View All
-    final displayedStats = sortedStats.take(5).toList();
-    final maxQty = displayedStats.first.totalQty;
-    final showViewAll = sortedStats.length > 5;
-
-    return Column(
-      children: [
-        ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: displayedStats.length,
-          itemBuilder: (context, index) {
-            return _ProductListItem(
-              stat: displayedStats[index],
-              maxQty: maxQty,
-              rank: index + 1,
-              product: productsMap[displayedStats[index].name],
-            );
-          },
-        ),
-        if (showViewAll) ...[
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () =>
-                _showAllProductsSheet(context, sortedStats, productsMap),
-            style: TextButton.styleFrom(
-              foregroundColor: SoftColors.brandPrimary,
-              textStyle: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-            ),
-            child: Text("View All ${sortedStats.length} Products"),
-          ),
-        ],
-      ],
-    );
-  }
-
-  void _showAllProductsSheet(
-    BuildContext context,
-    List<_ProductStat> allStats,
-    Map<String, Product> productsMap,
-  ) {
-    final maxQty = allStats.first.totalQty;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          expand: false,
-          builder: (context, scrollController) {
-            return Column(
-              children: [
-                // Handle
-                Center(
-                  child: Container(
-                    margin: const EdgeInsets.only(top: 12, bottom: 12),
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "All Products",
-                        style: GoogleFonts.outfit(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: SoftColors.textMain,
-                        ),
-                      ),
-                      Text(
-                        "${allStats.length} Items",
-                        style: GoogleFonts.outfit(
-                          color: SoftColors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(),
-                Expanded(
-                  child: ListView.separated(
-                    controller: scrollController,
-                    padding: const EdgeInsets.all(24),
-                    itemCount: allStats.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 24),
-                    itemBuilder: (context, index) {
-                      return _ProductListItem(
-                        stat: allStats[index],
-                        maxQty: maxQty,
-                        rank: index + 1,
-                        product: productsMap[allStats[index].name],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
     );
   }
 }

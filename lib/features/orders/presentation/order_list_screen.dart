@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/theme/app_theme.dart'; // Corrected import path
 import 'package:intl/intl.dart';
 import '../../../../design_system.dart';
 import '../../orders/data/firebase_orders_repository.dart';
@@ -23,472 +24,1165 @@ class OrderListScreen extends ConsumerStatefulWidget {
 class _OrderListScreenState extends ConsumerState<OrderListScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late ScrollController _scrollController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging || _tabController.animation != null) {
+        if (!mounted) return;
+        setState(() {}); // Rebuild for FAB visibility
+      }
+    });
+
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (_tabController.index == 1 && // Only for History tab
+        _scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 200) {
+      final historyState = ref.read(orderHistoryProvider(false)).valueOrNull;
+      if (historyState != null &&
+          !historyState.isLoadingMore &&
+          historyState.hasMore) {
+        ref.read(orderHistoryProvider(false).notifier).loadMore();
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final ordersAsync = ref.watch(ordersStreamProvider);
+    // Listen to tab changes to update FAB visibility
+    // We need to rebuild when tab index changes
+    // Using AnimatedBuilder on the controller or just setState since we have a mixin
+    // But mixin doesn't auto-rebuild. Let's add listener in initState.
+    // Actually, simpler: Wrap FAB in AnimatedBuilder listening to _tabController?
+    // Or just setState in listener. Since we need to access _tabController in build.
+    // Let's rely on standard setState in listener added in initState.
+
+    // ... Existing build logic ...
+
+    // Listen to tab changes to update FAB visibility
+    // We need to rebuild when tab index changes (handled by setState in listener)
     final userProfileAsync = ref.watch(currentUserProfileProvider);
 
+    final colors = context.softColors; // Access dynamic colors
+
     if (userProfileAsync.isLoading) {
-      return const Scaffold(
-        backgroundColor: SoftColors.background,
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        backgroundColor: colors.background,
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(top: 80),
+            child: const SoftShimmer.orderCard(itemCount: 4),
+          ),
+        ),
       );
     }
 
     final user = userProfileAsync.value;
     final isEmployee = user?.role == UserRole.employee;
 
-    final historyState = ref.watch(orderHistoryProvider(isArchived: false));
+    final historyAsync = ref.watch(orderHistoryProvider(false));
+    final historyState = historyAsync.value;
 
     return PopScope(
-      canPop: !historyState.isSelectionMode,
-      onPopInvoked: (didPop) {
+      canPop: !(historyState?.isSelectionMode ?? false),
+      onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (historyState.isSelectionMode) {
-          // Exit Selection Mode on Back Press
+        // Exit Selection Mode manually if back is pressed
+        if (historyState?.isSelectionMode ?? false) {
+          ref.read(orderHistoryProvider(false).notifier).clearSelection();
           ref
-              .read(orderHistoryProvider(isArchived: false).notifier)
-              .clearSelection();
+              .read(orderHistoryProvider(false).notifier)
+              .toggleSelectionMode(); // Actually turn it off
         }
       },
-      child: SoftScaffold(
-        title: 'Orders',
-        floatingActionButton: isEmployee
-            ? null
-            : FloatingActionButton.extended(
-                heroTag: 'orders_fab',
-                onPressed: () {
-                  context.go('/orders/new-order');
-                },
-                backgroundColor: SoftColors.brandPrimary,
-                foregroundColor: Colors.white,
-                icon: const Icon(Icons.add),
-                label: Text(
-                  "New Order",
-                  style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
+      child: RefreshIndicator(
+        onRefresh: () async {
+          // Standard refresh logic - usually driven by state change or explicit refresh
+          // Active: Stream handles itself (but pull to refresh could force check? Firestore stream is live).
+          // History: Needs explicit refresh.
+          if (_tabController.index == 1) {
+            await ref.read(orderHistoryProvider(false).notifier).refresh();
+          }
+        },
+        child: SoftSliverScaffold(
+          controller: _scrollController,
+          title: 'Orders',
+          floatingActionButton: AnimatedScale(
+            scale:
+                (isEmployee ||
+                    _tabController.index == 1 ||
+                    (historyState?.isSelectionMode ?? false))
+                ? 0.0
+                : 1.0,
+            duration: const Duration(milliseconds: 200),
+            child: FloatingActionButton.extended(
+              heroTag: 'orders_fab',
+              onPressed: () {
+                context.go('/orders/new-order');
+              },
+              backgroundColor: colors.brandPrimary,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add),
+              label: Text(
+                "New Order",
+                style: GoogleFonts.outfit(fontWeight: FontWeight.bold),
               ),
-        body: Column(
-          children: [
-            // Custom Tab Bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: SoftColors.surface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: SoftColors.textMain.withValues(alpha: 0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: TabBar(
-                          controller: _tabController,
-                          dividerColor: Colors.transparent,
-                          labelColor: Colors.white,
-                          unselectedLabelColor: SoftColors.textSecondary,
-                          indicator: BoxDecoration(
-                            color: SoftColors.brandPrimary,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          indicatorSize: TabBarIndicatorSize.tab,
-                          indicatorPadding: const EdgeInsets.all(4),
-                          labelStyle: GoogleFonts.outfit(
-                            fontWeight: FontWeight.bold,
-                          ),
-                          tabs: const [
-                            Tab(text: 'Active'),
-                            Tab(text: 'History'),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
+          slivers: [
+            // 1. Tab Bar (SliverToBox)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: colors.surface,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: SoftColors.textMain.withValues(
+                                alpha: 0.05,
+                              ),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
                           ],
                         ),
-                      ),
-                    ),
-                  ),
-                  if (!isEmployee) ...[
-                    const SizedBox(width: 12),
-                    Container(
-                      height: 48,
-                      width: 48,
-                      decoration: BoxDecoration(
-                        color: SoftColors.surface,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: SoftColors.textMain.withValues(alpha: 0.05),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: TabBar(
+                            controller: _tabController,
+                            dividerColor: Colors.transparent,
+                            labelColor: Colors.white,
+                            unselectedLabelColor: colors.textSecondary,
+                            indicator: BoxDecoration(
+                              color: colors.brandPrimary,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            indicatorPadding: const EdgeInsets.all(4),
+                            labelStyle: GoogleFonts.outfit(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            tabs: const [
+                              Tab(text: 'Active'),
+                              Tab(text: 'History'),
+                            ],
+                            onTap: (index) {
+                              setState(
+                                () {},
+                              ); // Trigger rebuild to switch slivers
+                            },
                           ),
-                        ],
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.archive_outlined,
-                          color: SoftColors.textMain,
                         ),
-                        tooltip: "Archived Orders",
-                        onPressed: () {
-                          context.push('/orders/archived');
-                        },
                       ),
                     ),
+                    if (!isEmployee) ...[
+                      const SizedBox(width: 12),
+                      Container(
+                        height: 48,
+                        width: 48,
+                        decoration: BoxDecoration(
+                          color: SoftColors.surface,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: SoftColors.textMain.withValues(
+                                alpha: 0.05,
+                              ),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.archive_outlined,
+                            color: colors.textMain,
+                          ),
+                          tooltip: "Archived Orders",
+                          onPressed: () {
+                            context.push('/orders/archived');
+                          },
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
 
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  // Active Orders Tab (Keep stream for active)
-                  ordersAsync.when(
-                    data: (orders) {
-                      final activeOrders = orders
-                          .where((o) => o.status != OrderStatus.completed)
-                          .toList();
-
-                      // Re-use _OrderListView but with mock state for active orders (Simpler to just make a wrapper or specialized widget really, but for speed...)
-                      // Actually, _OrderListView now expects OrderHistoryState.
-                      // Let's create a temporary state wrapper for active orders.
-                      final activeState = OrderHistoryState(
-                        orders: activeOrders,
-                        isLoadingInitial: false,
-                        hasMore: false,
-                      );
-
-                      return OrderListView(
-                        state: activeState,
-                        isEmptyMessage: "No active orders",
-                        isHistory: false,
-                        isArchived: false,
-                      );
-                    },
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
-                    error: (e, s) => Center(child: Text("Error: $e")),
+            // 2. Content Slivers (Conditional)
+            if (_tabController.index == 0) ...[
+              // ACTIVE ORDERS SLIVERS
+              ordersAsync.when(
+                data: (orders) {
+                  final activeOrders = orders
+                      .where((o) => o.status != OrderStatus.completed)
+                      .toList();
+                  final activeState = OrderHistoryState(
+                    orders: activeOrders,
+                    hasMore: false,
+                  );
+                  return SliverOrderList(
+                    state: activeState,
+                    isEmptyMessage: "No active orders",
+                    isHistory: false,
+                    isArchived: false,
+                  );
+                },
+                loading: () =>
+                    SliverToBoxAdapter(child: SoftShimmer.orderCard()),
+                error: (e, s) => SliverToBoxAdapter(
+                  child: ErrorView(
+                    message: "Failed to load active orders.",
+                    onRetry: () => ref.invalidate(ordersStreamProvider),
+                    retryLabel: "Retry",
                   ),
-
-                  // History Tab (New Design)
-                  Column(
-                    children: [
-                      // 1. Filter Chips (Horizontal Scroll) - Top Priority
-                      Container(
-                        height: 60, // Increased height for breathing room
-                        margin: const EdgeInsets.only(
-                          bottom: 0,
-                        ), // Add spacing below list
+                ),
+              ),
+            ] else ...[
+              // HISTORY ORDERS SLIVERS
+              historyAsync.when(
+                loading: () =>
+                    SliverToBoxAdapter(child: SoftShimmer.orderCard()),
+                error: (e, s) => SliverToBoxAdapter(
+                  child: ErrorView(
+                    message: "Failed to load history.",
+                    onRetry: () {
+                      ref.read(orderHistoryProvider(false).notifier).refresh();
+                    },
+                    retryLabel: "Refresh",
+                  ),
+                ),
+                data: (state) => SliverMainAxisGroup(
+                  slivers: [
+                    // Categories
+                    SliverToBoxAdapter(
+                      child: Container(
+                        height: 48,
+                        margin: const EdgeInsets.only(top: 12, bottom: 0),
                         child: ListView(
                           scrollDirection: Axis.horizontal,
                           padding: const EdgeInsets.symmetric(horizontal: 24),
                           children: [
-                            _FilterChip(
+                            _CategoryChip(
                               label: "All",
-                              isSelected: historyState.typeFilter == null,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  HapticFeedback.mediumImpact();
-                                  ref
-                                      .read(
-                                        orderHistoryProvider(
-                                          isArchived: false,
-                                        ).notifier,
-                                      )
-                                      .setTypeFilter(null);
-                                }
+                              isSelected: state.typeFilter == null,
+                              isDisabled: state.filterVoided,
+                              onTap: () {
+                                ref
+                                    .read(orderHistoryProvider(false).notifier)
+                                    .setTypeFilter(null);
+                                HapticFeedback.selectionClick();
                               },
                             ),
-                            const SizedBox(width: 12),
-                            _FilterChip(
+                            const SizedBox(width: 8),
+                            _CategoryChip(
                               label: "Reservations",
                               isSelected:
-                                  historyState.typeFilter == OrderType.standard,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  HapticFeedback.mediumImpact();
-                                  ref
-                                      .read(
-                                        orderHistoryProvider(
-                                          isArchived: false,
-                                        ).notifier,
-                                      )
-                                      .setTypeFilter(OrderType.standard);
-                                }
+                                  state.typeFilter == OrderType.standard,
+                              isDisabled: state.filterVoided,
+                              onTap: () {
+                                ref
+                                    .read(orderHistoryProvider(false).notifier)
+                                    .setTypeFilter(OrderType.standard);
+                                HapticFeedback.selectionClick();
                               },
                             ),
-                            const SizedBox(width: 12),
-                            _FilterChip(
+                            const SizedBox(width: 8),
+                            _CategoryChip(
                               label: "Quick Sales",
                               isSelected:
-                                  historyState.typeFilter ==
-                                  OrderType.manualReduction,
-                              onSelected: (selected) {
-                                if (selected) {
-                                  HapticFeedback.mediumImpact();
-                                  ref
-                                      .read(
-                                        orderHistoryProvider(
-                                          isArchived: false,
-                                        ).notifier,
-                                      )
-                                      .setTypeFilter(OrderType.manualReduction);
-                                }
+                                  state.typeFilter == OrderType.manualReduction,
+                              isDisabled: state.filterVoided,
+                              onTap: () {
+                                ref
+                                    .read(orderHistoryProvider(false).notifier)
+                                    .setTypeFilter(OrderType.manualReduction);
+                                HapticFeedback.selectionClick();
                               },
                             ),
                           ],
                         ),
                       ),
+                    ),
 
-                      // 2. Date Range Bar (Sub-Header)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical:
-                              16, // Reduced top vertical padding as chips have margin now
+                    // Date Range Bar (Pinned)
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _DateRangeHeaderDelegate(state: state),
+                    ),
+
+                    // Audit Bar
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _SlimAuditBar(state: state),
+                      ),
+                    ),
+
+                    // List
+                    SliverOrderList(
+                      state: state,
+                      isEmptyMessage: state.filterVoided
+                          ? "No voided orders found."
+                          : "No history found",
+                      isHistory: true,
+                      isArchived: false,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+          bottomSheet: (historyState?.isSelectionMode ?? false) && !isEmployee
+              ? const SelectionToolbar(isArchived: false)
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+class _SlimAuditBar extends ConsumerWidget {
+  final OrderHistoryState state;
+  const _SlimAuditBar({required this.state});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.softColors;
+    // 1. Fetch Global Void Count
+    final voidCountAsync = ref.watch(voidedOrdersCountProvider);
+    final globalVoidCount = voidCountAsync.value ?? 0;
+    final isDisabled = state.filterVoided;
+
+    return SizedBox(
+      height: 40, // Reduced height for sub-filters
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        children: [
+          // Date Shortcuts
+          _AuditChip(
+            label: "Today",
+            isSelected: _isRangeToday(state.dateRange),
+            isDisabled: isDisabled,
+            onTap: () {
+              final now = DateTime.now();
+              final range = DateTimeRange(
+                start: DateTime(now.year, now.month, now.day),
+                end: now,
+              );
+              ref
+                  .read(orderHistoryProvider(false).notifier)
+                  .setDateRange(range);
+              HapticFeedback.lightImpact();
+            },
+          ),
+          const SizedBox(width: 8),
+          _AuditChip(
+            label: "Yesterday",
+            isSelected: _isRangeYesterday(state.dateRange),
+            isDisabled: isDisabled,
+            onTap: () {
+              final now = DateTime.now();
+              final yesterday = now.subtract(const Duration(days: 1));
+              final range = DateTimeRange(
+                start: DateTime(yesterday.year, yesterday.month, yesterday.day),
+                end: DateTime(
+                  yesterday.year,
+                  yesterday.month,
+                  yesterday.day,
+                  23,
+                  59,
+                  59,
+                ),
+              );
+              ref
+                  .read(orderHistoryProvider(false).notifier)
+                  .setDateRange(range);
+              HapticFeedback.lightImpact();
+            },
+          ),
+          const SizedBox(width: 8),
+
+          // Divider
+          Container(
+            width: 1,
+            color: colors.border.withValues(alpha: 0.5),
+            margin: const EdgeInsets.symmetric(vertical: 8),
+          ),
+          const SizedBox(width: 8),
+
+          // Void Toggle
+          _AuditChip(
+            label: "Voided",
+            count: globalVoidCount, // Show Always? Or if (globalVoidCount > 0)
+            // User requested to know availablity. Showing 0 is fine if 0.
+            isSelected: state.filterVoided,
+            isErrorData: true,
+            onTap: () {
+              ref.read(orderHistoryProvider(false).notifier).toggleVoidFilter();
+              HapticFeedback.mediumImpact();
+            },
+          ),
+          const SizedBox(width: 8),
+
+          // Notes Toggle
+          _AuditChip(
+            label: "Notes",
+            count: state.filterHasNotes ? state.orders.length : null,
+            isSelected: state.filterHasNotes,
+            onTap: () {
+              ref
+                  .read(orderHistoryProvider(false).notifier)
+                  .toggleNotesFilter();
+              HapticFeedback.mediumImpact();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isRangeToday(DateTimeRange? range) {
+    if (range == null) return false;
+    final now = DateTime.now();
+    return range.start.year == now.year &&
+        range.start.month == now.month &&
+        range.start.day == now.day &&
+        range.end.day == now.day;
+  }
+
+  bool _isRangeYesterday(DateTimeRange? range) {
+    if (range == null) return false;
+    final now = DateTime.now();
+    final yesterday = now.subtract(const Duration(days: 1));
+    return range.start.year == yesterday.year &&
+        range.start.day == yesterday.day;
+  }
+}
+
+class _AuditChip extends StatelessWidget {
+  final String label;
+  final int? count;
+  final bool isSelected;
+  final bool isDisabled;
+  final bool isErrorData;
+  final VoidCallback onTap;
+
+  const _AuditChip({
+    required this.label,
+    this.count,
+    required this.isSelected,
+    this.isDisabled = false,
+    required this.onTap,
+    this.isErrorData = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.softColors;
+    final color = isErrorData ? colors.error : colors.brandPrimary;
+
+    return IgnorePointer(
+      ignoring: isDisabled,
+      child: Opacity(
+        opacity: isDisabled ? 0.4 : 1.0,
+        child: GestureDetector(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onTap();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: isSelected ? color.withValues(alpha: 0.1) : colors.surface,
+              border: Border.all(
+                color: isSelected
+                    ? color
+                    : colors.border.withValues(alpha: 0.5),
+                width: 1.5,
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.outfit(
+                    color: isSelected ? color : colors.textSecondary,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+                if (count != null) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      "$count",
+                      style: GoogleFonts.outfit(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// OrderCard Update for Void Logic
+class OrderCard extends ConsumerWidget {
+  final OrderModel order;
+  final bool isArchived;
+  const OrderCard({super.key, required this.order, required this.isArchived});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final historyAsync = ref.watch(orderHistoryProvider(isArchived));
+    final historyState = historyAsync.valueOrNull;
+    final isSelected = historyState?.selectedIds.contains(order.id) ?? false;
+    final user = ref.watch(currentUserProfileProvider).value;
+    final isEmployee = user?.role == UserRole.employee;
+    final colors = context.softColors; // Access colors
+
+    final isVoided = order.isVoided; // New field check
+
+    // Content Widget
+    Widget cardContent;
+    if (order.customer.name == 'Quick Sale') {
+      cardContent = QuickSaleOrderCard(order: order, isArchived: isArchived);
+    } else {
+      cardContent = _ReservationOrderCard(order: order);
+    }
+
+    // Voided Styling Wrapper (Opacity)
+    if (isVoided) {
+      cardContent = Opacity(opacity: 0.6, child: cardContent);
+    }
+
+    // ... Gesture Logic (Keep existing, update Dismissible) ...
+
+    Widget contentWithOverlay = cardContent;
+    if (historyState?.isSelectionMode ?? false) {
+      contentWithOverlay = GestureDetector(
+        onTap: () {
+          ref
+              .read(orderHistoryProvider(isArchived).notifier)
+              .toggleOrderSelection(order.id);
+        },
+        child: AbsorbPointer(absorbing: true, child: contentWithOverlay),
+      );
+    } else {
+      if (!isEmployee) {
+        contentWithOverlay = GestureDetector(
+          onLongPress: () {
+            ref
+                .read(orderHistoryProvider(isArchived).notifier)
+                .enterSelectionModeWithId(order.id);
+          },
+          child: contentWithOverlay,
+        );
+      }
+    }
+
+    if (!(historyState?.isSelectionMode ?? false) && !isEmployee) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Dismissible(
+              key: Key(order.id),
+              direction: DismissDirection.horizontal,
+              // Right: Archive / Restore
+              background: _buildSwipeAction(
+                alignment: Alignment.centerLeft,
+                color: isArchived ? SoftColors.success : Colors.orangeAccent,
+                icon: isArchived
+                    ? Icons.unarchive_rounded
+                    : Icons.archive_outlined,
+                label: isArchived ? "Restore" : "Archive",
+              ),
+              // Left: Void (Active) or Purge (Voided)
+              secondaryBackground: _buildSwipeAction(
+                alignment: Alignment.centerRight,
+                color: SoftColors.error,
+                // Change Icon/Label based on Void status
+                icon: isVoided ? Icons.delete_forever : Icons.delete_outline,
+                label: isVoided ? "Purge" : "Void",
+              ),
+              confirmDismiss: (direction) async {
+                if (direction == DismissDirection.startToEnd) {
+                  // Archive Logic (Keep existing)
+                  final newArchiveStatus = !isArchived;
+                  try {
+                    await ref
+                        .read(ordersRepositoryProvider)
+                        .archiveOrder(order.id, newArchiveStatus);
+                    ref
+                        .read(orderHistoryProvider(isArchived).notifier)
+                        .removeOrderLocally(order.id);
+
+                    // Refresh the opposite list so the order appears there immediately
+                    ref
+                        .read(orderHistoryProvider(!isArchived).notifier)
+                        .refresh();
+
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            newArchiveStatus ? "Archived" : "Restored",
+                          ),
                         ),
-                        child: InkWell(
-                          onTap: () async {
-                            final picked = await showDateRangePicker(
-                              context: context,
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime.now(),
-                              builder: (context, child) {
-                                return Theme(
-                                  data: Theme.of(context).copyWith(
-                                    colorScheme: const ColorScheme.light(
-                                      primary: SoftColors.brandPrimary,
-                                    ),
-                                  ),
-                                  child: child!,
-                                );
-                              },
-                            );
-                            if (picked != null) {
-                              ref
-                                  .read(
-                                    orderHistoryProvider(
-                                      isArchived: false,
-                                    ).notifier,
-                                  )
-                                  .setDateRange(picked);
-                            }
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: SoftColors.textSecondary.withValues(
-                                  alpha: 0.1,
-                                ),
+                      );
+                    }
+                    return true;
+                  } catch (e) {
+                    return false;
+                  }
+                } else {
+                  // Swipe Left -> Void or Purge
+                  if (isVoided) {
+                    // PURGE (Hard Delete)
+                    final confirm = await showSoftDialog<bool>(
+                      context: context,
+                      builder: (c) => AlertDialog(
+                        backgroundColor: colors.surface,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            SoftColors.cardRadius,
+                          ),
+                        ),
+                        title: Text(
+                          "Permanent Purge",
+                          style: GoogleFonts.outfit(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        content: Text(
+                          "Delete forever? Cannot undo.",
+                          style: GoogleFonts.outfit(
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(c, false),
+                            child: const Text("Cancel"),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(c, true),
+                            child: Text(
+                              "Purge",
+                              style: GoogleFonts.outfit(
+                                color: colors.error,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.calendar_today_rounded,
-                                  size: 18,
-                                  color: SoftColors.textSecondary,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    historyState.dateRange == null
-                                        ? "Filter by Date Range"
-                                        : "${DateFormat('MMM d').format(historyState.dateRange!.start)} - ${DateFormat('MMM d').format(historyState.dateRange!.end)}",
-                                    style: GoogleFonts.outfit(
-                                      color: historyState.dateRange == null
-                                          ? SoftColors.textSecondary
-                                          : SoftColors.textMain,
-                                      fontWeight: historyState.dateRange == null
-                                          ? FontWeight.normal
-                                          : FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                if (historyState.dateRange != null)
-                                  GestureDetector(
-                                    onTap: () {
-                                      HapticFeedback.lightImpact(); // Haptic feedback
-                                      ref
-                                          .read(
-                                            orderHistoryProvider(
-                                              isArchived: false,
-                                            ).notifier,
-                                          )
-                                          .clearDateRange();
-                                    },
-                                    child: CircleAvatar(
-                                      radius: 12, // Radius 12
-                                      backgroundColor: SoftColors.error
-                                          .withValues(alpha: 0.1),
-                                      child: const Icon(
-                                        Icons.close_rounded,
-                                        size: 14,
-                                        color: SoftColors.error,
-                                      ),
-                                    ),
-                                  )
-                                else
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    size: 20,
-                                    color: SoftColors.textSecondary,
-                                  ),
-                              ],
-                            ),
                           ),
-                        ),
+                        ],
                       ),
+                    );
+                    if (confirm == true) {
+                      ref
+                          .read(orderHistoryProvider(isArchived).notifier)
+                          .executePurgeOrder(order.id);
+                      return true;
+                    }
+                    return false;
+                  } else {
+                    // VOID (Soft Delete + Restore Stock)
+                    // Show confirmation or undo? "Undo Support (Snackbar)".
+                    // Usually Void is destructive, so a dialog is safer, but Snackbar Undo is nice for speed.
+                    // Let's do instant Void with Undo Snackbar.
 
-                      // 3. Pinned Summary (Mini-Dashboard)
-                      if (historyState.orders.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 4,
+                    try {
+                      await ref
+                          .read(orderHistoryProvider(isArchived).notifier)
+                          .executeVoidOrder(order.id);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: const Text(
+                              "Order Voided & Stock Restored",
+                            ),
+                            // action: SnackBarAction(
+                            //   label: "UNDO",
+                            //   onPressed: () {
+                            //     // Undo not supported yet
+                            //   },
+                            // ),
                           ),
-                          child: _HistorySummaryCard(state: historyState),
+                        );
+                      }
+                      return true;
+                    } catch (e) {
+                      return false;
+                    }
+                  }
+                }
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? colors.brandPrimary.withValues(alpha: 0.05)
+                      : colors.surface,
+                  border: Border.all(
+                    color: isSelected
+                        ? colors.brandPrimary
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: contentWithOverlay,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Non-Dismissible Fallback
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? colors.brandPrimary.withValues(alpha: 0.05)
+              : colors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? colors.brandPrimary : Colors.transparent,
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+            ),
+          ],
+        ),
+        child: contentWithOverlay,
+      ),
+    );
+  }
+
+  Widget _buildSwipeAction({
+    required Alignment alignment,
+    required Color color,
+    required IconData icon,
+    String? label,
+  }) {
+    return Container(
+      alignment: alignment,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: Colors.white, size: 28),
+          if (label != null)
+            Text(
+              label,
+              style: GoogleFonts.outfit(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ... (Existing OrderCard and other classes)
+
+class _CategoryChip extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final bool isDisabled;
+  final VoidCallback onTap;
+
+  const _CategoryChip({
+    required this.label,
+    required this.isSelected,
+    this.isDisabled = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.softColors;
+    return IgnorePointer(
+      ignoring: isDisabled,
+      child: Opacity(
+        opacity: isDisabled ? 0.4 : 1.0,
+        child: GestureDetector(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onTap();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: isSelected ? colors.brandPrimary : colors.surface,
+              borderRadius: BorderRadius.circular(14), // Modern soft round
+              border: Border.all(
+                color: isSelected
+                    ? Colors.transparent
+                    : colors.border.withValues(alpha: 0.5),
+              ),
+              boxShadow: isSelected
+                  ? [
+                      BoxShadow(
+                        color: colors.brandPrimary.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Text(
+              label,
+              style: GoogleFonts.outfit(
+                color: isSelected ? Colors.white : colors.textSecondary,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DateRangeBar extends ConsumerStatefulWidget {
+  final OrderHistoryState state;
+  const _DateRangeBar({required this.state});
+
+  @override
+  ConsumerState<_DateRangeBar> createState() => _DateRangeBarState();
+}
+
+class _DateRangeBarState extends ConsumerState<_DateRangeBar> {
+  bool _slideFromRight = true;
+
+  @override
+  void didUpdateWidget(covariant _DateRangeBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Determine slide direction based on date comparison
+    final oldRange = oldWidget.state.dateRange;
+    final newRange = widget.state.dateRange;
+
+    if (oldRange != newRange) {
+      // Trigger haptic on date change
+      HapticFeedback.mediumImpact();
+
+      if (newRange == null || oldRange == null) {
+        _slideFromRight = newRange != null;
+      } else {
+        // Compare start dates for direction
+        _slideFromRight = newRange.start.isAfter(oldRange.start);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasRange = widget.state.dateRange != null;
+    final isDisabled = widget.state.filterVoided;
+    final formatter = DateFormat('MMM dd');
+    String label = "Filter by Date Range";
+    if (hasRange) {
+      final start = formatter.format(widget.state.dateRange!.start);
+      final end = formatter.format(widget.state.dateRange!.end);
+      if (start == end) {
+        label = start;
+      } else {
+        label = "$start - $end";
+      }
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: IgnorePointer(
+            ignoring: isDisabled,
+            child: Opacity(
+              opacity: isDisabled ? 0.4 : 1.0,
+              child: GestureDetector(
+                onTap: () async {
+                  final picked = await showDateRangePicker(
+                    context: context,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now(),
+                    initialDateRange: widget.state.dateRange,
+                    builder: (context, child) {
+                      return Theme(
+                        data: Theme.of(context).copyWith(
+                          colorScheme: const ColorScheme.light(
+                            primary: SoftColors.brandPrimary,
+                            onPrimary: Colors.white,
+                            surface: Colors.white,
+                            onSurface: SoftColors.textMain,
+                          ),
                         ),
-
-                      const SizedBox(height: 8),
-
-                      // 4. The List
+                        child: child!,
+                      );
+                    },
+                  );
+                  if (picked != null) {
+                    ref
+                        .read(orderHistoryProvider(false).notifier)
+                        .setDateRange(picked);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: SoftColors.border.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.calendar_today,
+                        size: 18,
+                        color: hasRange
+                            ? SoftColors.brandPrimary
+                            : SoftColors.textSecondary,
+                      ),
+                      const SizedBox(width: 12),
+                      // Animated date label with directional slide
                       Expanded(
-                        child: RefreshIndicator(
-                          onRefresh: () async {
-                            await ref
-                                .read(
-                                  orderHistoryProvider(
-                                    isArchived: false,
-                                  ).notifier,
-                                )
-                                .refresh();
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 250),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            // Directional slide: right if newer, left if older
+                            final slideOffset = _slideFromRight
+                                ? Tween<Offset>(
+                                    begin: const Offset(0.3, 0),
+                                    end: Offset.zero,
+                                  )
+                                : Tween<Offset>(
+                                    begin: const Offset(-0.3, 0),
+                                    end: Offset.zero,
+                                  );
+
+                            return SlideTransition(
+                              position: slideOffset.animate(animation),
+                              child: FadeTransition(
+                                opacity: animation,
+                                child: child,
+                              ),
+                            );
                           },
-                          child: OrderListView(
-                            state: historyState,
-                            isEmptyMessage: "No history found",
-                            isHistory: true, // Enables sticky headers
-                            isArchived: false,
+                          child: Text(
+                            label,
+                            key: ValueKey<String>(label),
+                            style: GoogleFonts.outfit(
+                              fontSize: 14,
+                              color: hasRange
+                                  ? SoftColors.brandPrimary
+                                  : SoftColors.textSecondary,
+                              fontWeight: hasRange
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
-                ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (hasRange) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.close, color: SoftColors.textSecondary),
+            onPressed: () {
+              ref.read(orderHistoryProvider(false).notifier).clearDateRange();
+              HapticFeedback.lightImpact();
+            },
+            style: IconButton.styleFrom(
+              backgroundColor: SoftColors.surface,
+              padding: const EdgeInsets.all(8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class SelectionToolbar extends ConsumerWidget {
+  final bool isArchived;
+
+  const SelectionToolbar({super.key, required this.isArchived});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.softColors;
+    final stateAsync = ref.watch(orderHistoryProvider(isArchived));
+    final state =
+        stateAsync.valueOrNull ??
+        OrderHistoryState(
+          orders: [],
+          isArchived: isArchived,
+        ); // Fallback if loading
+
+    return Container(
+      color: colors.surface,
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+      child: SafeArea(
+        top: false, // Bottom sheet doesn't need top safe area
+        bottom: true, // Critical for iPhone/Android Gesture Bar
+        child: Row(
+          children: [
+            // using colors
+            Text(
+              "${state.selectedIds.length} Selected",
+              style: GoogleFonts.outfit(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            const Spacer(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    isArchived ? Icons.unarchive : Icons.archive,
+                    color: colors.brandPrimary,
+                  ),
+                  tooltip: isArchived
+                      ? "Unarchive Selected"
+                      : "Archive Selected",
+                  onPressed: () {
+                    // If archived, unarchive (pass false). If not, archive (pass true).
+                    ref
+                        .read(orderHistoryProvider(isArchived).notifier)
+                        .executeBulkArchive(!isArchived);
+                  },
+                ),
+                const SizedBox(width: 8),
+                // Only show Void (Restore Stock) if NOT in archive? Or both?
+                // Usually "Void" is an active order action. In archive, maybe just purge?
+                // But let's allow it for flexibility.
+                IconButton(
+                  icon: Icon(Icons.delete_outline, color: colors.error),
+                  tooltip: "Void (Restore Stock)",
+                  onPressed: () {
+                    _showBulkVoidConfirmation(context, ref);
+                  },
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(Icons.delete_forever, color: colors.error),
+                  tooltip: "Purge Selected",
+                  onPressed: () {
+                    _showBulkPurgeConfirmation(context, ref);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(width: 16),
+            // Divider
+            Container(width: 1, height: 24, color: colors.border),
+            const SizedBox(width: 16),
+            TextButton(
+              onPressed: () {
+                ref
+                    .read(orderHistoryProvider(isArchived).notifier)
+                    .toggleSelectionMode(); // Toggle off to exit
+                HapticFeedback.lightImpact();
+              },
+              child: Text(
+                "Cancel",
+                style: GoogleFonts.outfit(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
             ),
           ],
         ),
-        bottomSheet: historyState.isSelectionMode && !isEmployee
-            ? Container(
-                color: SoftColors.surface,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
-                child: SafeArea(
-                  child: Row(
-                    children: [
-                      Text(
-                        "${historyState.selectedIds.length} Selected",
-                        style: GoogleFonts.outfit(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.archive,
-                          color: SoftColors.brandAccent,
-                        ),
-                        tooltip: "Archive Selected",
-                        onPressed: () {
-                          ref
-                              .read(
-                                orderHistoryProvider(
-                                  isArchived: false,
-                                ).notifier,
-                              )
-                              .executeBulkArchive(true);
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          color: SoftColors.error,
-                        ),
-                        tooltip: "Void (Restore Stock)",
-                        onPressed: () {
-                          // Show confirmation? Or just execute?
-                          // Ideally confirmation. I'll execute for now as per "executeBulkDelete" existence.
-                          // User plan implied guards were in repo ("Transaction Safety").
-                          // But UI confirmation is nice. For speed, I'll add confirmation if easy.
-                          // _showBulkVoidConfirmation?
-                          // I'll call executeBulkDelete directly for now, or add a confirmation dialog helper.
-                          // Given user instructions, I should probably prioritize functionality.
-                          _showBulkVoidConfirmation(context, ref);
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.delete_forever,
-                          color: SoftColors.error,
-                        ),
-                        tooltip: "Purge Selected",
-                        onPressed: () {
-                          _showBulkPurgeConfirmation(context, ref);
-                        },
-                      ),
-                      const SizedBox(width: 12),
-                      TextButton(
-                        onPressed: () {
-                          ref
-                              .read(
-                                orderHistoryProvider(
-                                  isArchived: false,
-                                ).notifier,
-                              )
-                              .toggleSelectionMode();
-                          HapticFeedback.lightImpact(); // Haptic for visual feedback
-                        },
-                        child: const Text("Cancel"),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : null,
       ),
     );
   }
@@ -510,8 +1204,8 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
             onPressed: () {
               Navigator.pop(context);
               ref
-                  .read(orderHistoryProvider(isArchived: false).notifier)
-                  .executeBulkDelete();
+                  .read(orderHistoryProvider(isArchived).notifier)
+                  .executeBulkVoid();
             },
             child: const Text(
               "Void",
@@ -540,7 +1234,7 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
             onPressed: () {
               Navigator.pop(context);
               ref
-                  .read(orderHistoryProvider(isArchived: false).notifier)
+                  .read(orderHistoryProvider(isArchived).notifier)
                   .executeBulkPurge();
             },
             child: const Text("Purge", style: TextStyle(color: Colors.red)),
@@ -551,264 +1245,104 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
   }
 }
 
-class _HistorySummaryCard extends StatelessWidget {
-  final OrderHistoryState state;
-  const _HistorySummaryCard({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    // Use pre-calculated totals from state (Controller logic)
-    final totalRevenue = state.totalRevenue;
-    final totalItems = state.totalItems;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: SoftColors.brandPrimary,
-        borderRadius: BorderRadius.circular(16), // 16px Radius
-        boxShadow: [
-          BoxShadow(
-            color: SoftColors.brandPrimary.withValues(alpha: 0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Column(
-            children: [
-              Text(
-                "Revenue",
-                style: GoogleFonts.outfit(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 12,
-                ),
-              ),
-              Text(
-                "\$${totalRevenue.toStringAsFixed(2)}",
-                style: GoogleFonts.outfit(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
-            ],
-          ),
-          Container(
-            width: 1,
-            height: 30,
-            color: Colors.white.withValues(alpha: 0.2),
-          ),
-          Column(
-            children: [
-              Text(
-                "Items Sold",
-                style: GoogleFonts.outfit(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 12,
-                ),
-              ),
-              Text(
-                "$totalItems",
-                style: GoogleFonts.outfit(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class OrderListView extends ConsumerWidget {
+class SliverOrderList extends StatelessWidget {
   final OrderHistoryState state;
   final String isEmptyMessage;
   final bool isHistory;
   final bool isArchived;
 
-  const OrderListView({
+  const SliverOrderList({
+    super.key,
     required this.state,
     required this.isEmptyMessage,
     this.isHistory = false,
-    this.isArchived = false,
+    required this.isArchived,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // 1. Error State
-    if (state.errorMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.error_outline, size: 60, color: SoftColors.error),
-              const SizedBox(height: 16),
-              Text(
-                "Something went wrong",
-                style: GoogleFonts.outfit(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: SoftColors.textMain,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                state.errorMessage!,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.outfit(color: SoftColors.textSecondary),
-              ),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: () {
-                  ref
-                      .read(
-                        orderHistoryProvider(isArchived: isArchived).notifier,
-                      )
-                      .refresh();
-                },
-                icon: const Icon(Icons.refresh),
-                label: const Text("Try Again"),
-                style: FilledButton.styleFrom(
-                  backgroundColor: SoftColors.brandPrimary,
-                ),
-              ),
-            ],
-          ),
+  Widget build(BuildContext context) {
+    if (!state.isLoadingMore && state.orders.isEmpty) {
+      return SliverToBoxAdapter(
+        child: SoftAnimatedEmpty(
+          icon: Icons.inbox_outlined,
+          message: isEmptyMessage,
         ),
       );
     }
 
-    // 2. Initial Loading
-    if (state.isLoadingInitial) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final itemCount = isHistory
+        ? _groupOrders(state.orders).length + (state.isLoadingMore ? 1 : 0)
+        : state.orders.length;
 
-    // 2. Empty State
-    if (state.orders.isEmpty) {
-      // If not loading and empty, show placeholder
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.assignment_outlined,
-              size: 60,
-              color: SoftColors.textSecondary.withValues(alpha: 0.3),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              isEmptyMessage,
-              style: GoogleFonts.outfit(
-                color: SoftColors.textSecondary,
-                fontSize: 18,
+    return SliverList(
+      delegate: SliverChildBuilderDelegate((context, index) {
+        // History Grouping Logic
+        if (isHistory) {
+          final groups = _groupOrders(state.orders);
+          if (index >= groups.length) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: CircularProgressIndicator(),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Group By Date if History
-    // We do grouping here for simplicity of logic passing,
-    // though deeper optimization could move it to controller.
-    // For < 1000 items, local grouping is instant.
-    // We use a helper map for "Today", "Yesterday".
-
-    // For pagination scroll listener:
-    return NotificationListener<ScrollNotification>(
-      onNotification: (scrollInfo) {
-        if (isHistory &&
-            !state.isLoadingMore &&
-            state.hasMore &&
-            scrollInfo.metrics.pixels >=
-                scrollInfo.metrics.maxScrollExtent - 200) {
-          ref
-              .read(orderHistoryProvider(isArchived: isArchived).notifier)
-              .loadMore();
-          // Optional: HapticFeedback.lightImpact(); // Maybe too frequent if scrolling fast
-        }
-        return false;
-      },
-      child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(
-          24,
-          0,
-          24,
-          80,
-        ), // Bottom padding for FAB/Safe
-        itemCount: isHistory
-            ? _groupOrders(state.orders).length + (state.isLoadingMore ? 1 : 0)
-            : state.orders.length,
-        itemBuilder: (context, index) {
-          // ... Logic for Sticky Headers or Normal List
-          if (isHistory) {
-            final groups = _groupOrders(state.orders);
-            if (index >= groups.length) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: CircularProgressIndicator(),
-                ),
-              );
-            }
-            final entry = groups.entries.elementAt(index);
-            return RepaintBoundary(
-              child: StickyHeader(
-                header: ClipRRect(
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      height: 40,
-                      alignment: Alignment.centerLeft,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                      ), // Match list padding
-                      decoration: BoxDecoration(
-                        color: SoftColors.background.withValues(
-                          alpha: 0.8,
-                        ), // Translucent
-                        border: Border(
-                          bottom: BorderSide(
-                            color: SoftColors.textSecondary.withValues(
-                              alpha: 0.1,
-                            ),
+            );
+          }
+          final entry = groups.entries.elementAt(index);
+          return RepaintBoundary(
+            child: StickyHeader(
+              header: ClipRRect(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: Container(
+                    height: 40,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    decoration: BoxDecoration(
+                      color: SoftColors.background.withValues(alpha: 0.8),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: SoftColors.textSecondary.withValues(
+                            alpha: 0.1,
                           ),
                         ),
                       ),
-                      child: Text(
-                        entry.key,
-                        style: GoogleFonts.outfit(
-                          color: SoftColors.textSecondary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
+                    ),
+                    child: Text(
+                      entry.key,
+                      style: GoogleFonts.outfit(
+                        color: SoftColors.textSecondary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
                       ),
                     ),
                   ),
                 ),
-                content: Column(
-                  children: entry.value
-                      .map(
-                        (order) =>
-                            OrderCard(order: order, isArchived: isArchived),
-                      )
-                      .toList(),
-                ),
               ),
-            );
-          }
+              content: Column(
+                children: entry.value
+                    .asMap()
+                    .entries
+                    .map(
+                      (e) => SoftFadeInSlide(
+                        index: e.key,
+                        child: OrderCard(
+                          order: e.value,
+                          isArchived: isArchived,
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          );
+        }
 
-          return OrderCard(order: state.orders[index], isArchived: isArchived);
-        },
-      ),
+        // Active Orders (Linear)
+        return SoftFadeInSlide(
+          index: index,
+          child: OrderCard(order: state.orders[index], isArchived: isArchived),
+        );
+      }, childCount: itemCount),
     );
   }
 
@@ -830,7 +1364,6 @@ class OrderListView extends ConsumerWidget {
     if (dateCheck == today) return "Today";
     if (dateCheck == yesterday) return "Yesterday";
 
-    // Is this week?
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
     if (dateCheck.isAfter(weekStart.subtract(const Duration(seconds: 1)))) {
       return "This Week";
@@ -840,278 +1373,13 @@ class OrderListView extends ConsumerWidget {
   }
 }
 
-class OrderCard extends ConsumerWidget {
-  final OrderModel order;
-  final bool isArchived;
-  const OrderCard({required this.order, required this.isArchived});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final historyState = ref.watch(
-      orderHistoryProvider(isArchived: isArchived),
-    );
-    final isSelected = historyState.selectedIds.contains(order.id);
-    final user = ref.watch(currentUserProfileProvider).value;
-    final isEmployee = user?.role == UserRole.employee;
-
-    // Content Widget
-    Widget cardContent;
-    if (order.customer.name == 'Quick Sale') {
-      cardContent = QuickSaleOrderCard(order: order, isArchived: isArchived);
-    } else {
-      cardContent = _ReservationOrderCard(order: order);
-    }
-
-    // 1. Selection Overlay Wrapper
-    Widget contentWithOverlay = Stack(
-      children: [
-        cardContent,
-        if (historyState.isSelectionMode)
-          Positioned(
-            top: 8,
-            right: 8,
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isSelected ? SoftColors.brandPrimary : Colors.white,
-                border: Border.all(
-                  color: isSelected
-                      ? SoftColors.brandPrimary
-                      : SoftColors.textSecondary.withValues(alpha: 0.3),
-                  width: 2,
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(
-                  Icons.check,
-                  size: 14,
-                  color: isSelected ? Colors.white : Colors.transparent,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-
-    // 2. Gesture Wrapper (Tap/LongPress)
-    // Note: Child cards have their own Tap logic (BounceButton).
-    // In Selection Mode, we must override that.
-    // Outside Selection Mode, Long Press triggers generic selection.
-
-    if (historyState.isSelectionMode) {
-      // Override child taps by wrapping in a GestureDetector that absorbs or handles taps first?
-      // Actually, BounceButton consumes taps. We might need to wrap in AbsorbPointer?
-      // Or pass a 'onTap' override to children? Children are existing widgets.
-      // Wrapping with detailed GestureDetector behavior:
-      contentWithOverlay = GestureDetector(
-        onTap: () {
-          ref
-              .read(orderHistoryProvider(isArchived: isArchived).notifier)
-              .toggleOrderSelection(order.id);
-        },
-        child: AbsorbPointer(
-          absorbing: true, // Disable child buttons in selection mode
-          child: contentWithOverlay,
-        ),
-      );
-    } else {
-      // Normal Mode: Allow child taps, but listen for Long Press
-      if (!isEmployee) {
-        contentWithOverlay = GestureDetector(
-          onLongPress: () {
-            HapticFeedback.mediumImpact(); // High-Fidelity UX: Medium Haptic on Long Press
-            ref
-                .read(orderHistoryProvider(isArchived: false).notifier)
-                .toggleSelectionMode();
-            ref
-                .read(orderHistoryProvider(isArchived: isArchived).notifier)
-                .toggleOrderSelection(order.id);
-          },
-          child: contentWithOverlay,
-        );
-      }
-    }
-
-    // 3. Dismissible Wrapper (Swipe Actions)
-    // 3. Dismissible Wrapper (Swipe Actions)
-    if (!historyState.isSelectionMode && !isEmployee) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(
-              16,
-            ), // Not strictly needed if Container has radius, but good for safety
-            child: Dismissible(
-              key: Key(order.id),
-              direction: DismissDirection.horizontal,
-              // UX FIX: Remove floating background gap by creating a tight container here or relying on Padding wrapping Dismissible
-              // The Dismissible background must FILL the space behind the item.
-              background: _buildSwipeAction(
-                alignment: Alignment.centerLeft,
-                color: SoftColors.success,
-                icon: Icons.archive_outlined,
-              ),
-              secondaryBackground: _buildSwipeAction(
-                alignment: Alignment.centerRight,
-                color: SoftColors.error,
-                icon: Icons.delete_forever_rounded,
-              ),
-              confirmDismiss: (direction) async {
-                if (direction == DismissDirection.startToEnd) {
-                  // Swipe Right (L->R) -> Archive
-                  try {
-                    await ref
-                        .read(ordersRepositoryProvider)
-                        .archiveOrder(order.id, true);
-
-                    // Only update UI if remote succeeds
-                    ref
-                        .read(
-                          orderHistoryProvider(isArchived: isArchived).notifier,
-                        )
-                        .removeOrderLocally(order.id);
-
-                    if (context.mounted) {
-                      final scaffoldMessenger = ScaffoldMessenger.of(context);
-                      scaffoldMessenger.clearSnackBars();
-                      scaffoldMessenger.showSnackBar(
-                        SnackBar(
-                          content: const Text("Order archived"),
-                          duration: const Duration(seconds: 4),
-                          action: SnackBarAction(
-                            label: "UNDO",
-                            onPressed: () async {
-                              try {
-                                await ref
-                                    .read(ordersRepositoryProvider)
-                                    .archiveOrder(order.id, false);
-                                ref
-                                    .read(
-                                      orderHistoryProvider(
-                                        isArchived: isArchived,
-                                      ).notifier,
-                                    )
-                                    .addOrderLocally(order);
-                              } catch (e) {
-                                // Handle undo error
-                              }
-                            },
-                          ),
-                        ),
-                      );
-                    }
-                    return true;
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text("Failed to archive: $e"),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                    return false; // Prevent dismiss
-                  }
-                } else {
-                  // Swipe Left (R->L) -> Purge
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text("Permanent Purge"),
-                      content: const Text(
-                        "Delete this order forever? This cannot be undone.",
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text("Cancel"),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text(
-                            "Purge",
-                            style: TextStyle(color: Colors.red),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-
-                  if (confirmed == true) {
-                    ref
-                        .read(ordersRepositoryProvider)
-                        .permanentPurgeOrder(order.id);
-                    return true;
-                  }
-                  return false;
-                }
-              },
-              child: Container(color: Colors.white, child: contentWithOverlay),
-            ),
-          ),
-        ),
-      );
-    }
-
-    // When NOT in Dismissible (Selection Mode / Employee), we need successful Card styling (Shadow/Radius)
-    // Wrap contentWithOverlay in same styling as above but without the dismissible logic.
-    return Padding(
-      // Keep consistent spacing even without Dismissible
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: contentWithOverlay,
-      ),
-    );
-  }
-
-  Widget _buildSwipeAction({
-    required Alignment alignment,
-    required Color color,
-    required IconData icon,
-  }) {
-    // Ensure background matches the card's radius for high-fidelity feel
-    return Container(
-      alignment: alignment,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      padding: alignment == Alignment.centerLeft
-          ? const EdgeInsets.only(left: 20)
-          : const EdgeInsets.only(right: 20),
-      child: Icon(icon, color: Colors.white),
-    );
-  }
-}
-
 class _ReservationOrderCard extends StatelessWidget {
   final OrderModel order;
   const _ReservationOrderCard({required this.order});
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.softColors;
     final dateStr = DateFormat('MMM dd, yyyy • h:mm a').format(order.createdAt);
     // Display Order ID logic - Shortening for POS display (5 chars is standard)
     final displayId = order.id.length > 5
@@ -1120,7 +1388,7 @@ class _ReservationOrderCard extends StatelessWidget {
 
     return BounceButton(
       onTap: () {
-        context.go('/orders/detail', extra: order);
+        context.go('/orders/detail/${order.id}', extra: order);
       },
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1185,7 +1453,7 @@ class _ReservationOrderCard extends StatelessWidget {
                 Text(
                   "${order.items.length} items",
                   style: GoogleFonts.outfit(
-                    color: SoftColors.textSecondary,
+                    color: colors.textSecondary,
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                   ),
@@ -1193,7 +1461,7 @@ class _ReservationOrderCard extends StatelessWidget {
                 Text(
                   "\$${order.totalAmount.toStringAsFixed(2)}",
                   style: GoogleFonts.outfit(
-                    color: SoftColors.textMain,
+                    color: colors.textMain,
                     fontSize: 22, // Large
                     fontWeight: FontWeight.bold,
                   ),
@@ -1216,15 +1484,14 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     Color color;
     switch (status) {
+      case OrderStatus.reserved:
+        color = const Color(0xFF9333EA); // Purple
+        break;
       case OrderStatus.prepping:
         color = SoftColors.brandPrimary; // Active Blue (Pending)
         break;
       case OrderStatus.delivering:
-        color = SoftColors.warning; // Or Orange? Stuck to Logic.
-        // User spec said Blue for Pending.
-        // Let's stick to what was requested or logical equivalent.
-        // Prepping = Brand Primary (Blue)
-        // Delivering = Warning (Orange)
+        color = SoftColors.warning; // Orange
         break;
       case OrderStatus.completed:
         color = SoftColors.success;
@@ -1232,13 +1499,17 @@ class _StatusChip extends StatelessWidget {
       case OrderStatus.cancelled:
         color = SoftColors.error;
         break;
+      case OrderStatus.voided:
+        color = SoftColors.textSecondary;
+        break;
     }
 
-    // Override if needed logic
     if (status == OrderStatus.prepping) {
       color = SoftColors.brandPrimary;
     } else if (status == OrderStatus.delivering) {
       color = Colors.orange;
+    } else if (status == OrderStatus.reserved) {
+      color = const Color(0xFF9333EA);
     }
 
     return Container(
@@ -1263,10 +1534,15 @@ class _StatusChip extends StatelessWidget {
 class QuickSaleOrderCard extends ConsumerWidget {
   final OrderModel order;
   final bool isArchived;
-  const QuickSaleOrderCard({required this.order, required this.isArchived});
+  const QuickSaleOrderCard({
+    super.key,
+    required this.order,
+    required this.isArchived,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.softColors;
     // final statusColor = SoftColors.success; // Quick sales are usually completed
     final dateStr = DateFormat('MMM dd, hh:mm a').format(order.createdAt);
 
@@ -1281,10 +1557,10 @@ class QuickSaleOrderCard extends ConsumerWidget {
 
     return BounceButton(
       onTap: () {
-        context.go('/orders/detail', extra: order);
+        context.go('/orders/detail/${order.id}', extra: order);
       },
       child: Container(
-        color: Colors.white, // SoftCard's default background
+        color: colors.surface, // Dynamic surface
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
@@ -1293,12 +1569,12 @@ class QuickSaleOrderCard extends ConsumerWidget {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                color: colors.brandPrimary.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.shopping_bag_outlined,
-                color: SoftColors.brandPrimary,
+                color: colors.brandPrimary,
                 size: 20,
               ),
             ),
@@ -1319,7 +1595,7 @@ class QuickSaleOrderCard extends ConsumerWidget {
                           style: GoogleFonts.outfit(
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
-                            color: SoftColors.textMain,
+                            color: colors.textMain,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1329,7 +1605,7 @@ class QuickSaleOrderCard extends ConsumerWidget {
                       Text(
                         "\$${order.totalAmount.toStringAsFixed(2)}",
                         style: GoogleFonts.outfit(
-                          color: SoftColors.textMain,
+                          color: colors.textMain,
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
                         ),
@@ -1416,9 +1692,7 @@ class QuickSaleOrderCard extends ConsumerWidget {
                                 // Update Local History State immediately
                                 ref
                                     .read(
-                                      orderHistoryProvider(
-                                        isArchived: isArchived,
-                                      ).notifier,
+                                      orderHistoryProvider(isArchived).notifier,
                                     )
                                     .removeOrderLocally(order.id);
 
@@ -1489,36 +1763,32 @@ class QuickSaleOrderCard extends ConsumerWidget {
   }
 }
 
-class _FilterChip extends StatelessWidget {
-  final String label;
-  final bool isSelected;
-  final Function(bool) onSelected;
-
-  const _FilterChip({
-    required this.label,
-    required this.isSelected,
-    required this.onSelected,
-  });
+class _DateRangeHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final OrderHistoryState state;
+  const _DateRangeHeaderDelegate({required this.state});
 
   @override
-  Widget build(BuildContext context) {
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: onSelected,
-      // padding: removed to match standard size
-      backgroundColor: Colors.grey.withOpacity(
-        0.08,
-      ), // Light grey for unselected
-      selectedColor: SoftColors.brandPrimary, // Brand color for selected
-      checkmarkColor: Colors.white,
-      labelStyle: GoogleFonts.outfit(
-        color: isSelected ? Colors.white : SoftColors.textSecondary,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-        fontSize: 14,
-      ),
-      shape: const StadiumBorder(side: BorderSide(color: Colors.transparent)),
-      showCheckmark: false,
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(
+      color: SoftColors.background, // Match scaffold bg
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+      alignment: Alignment.center,
+      child: _DateRangeBar(state: state),
     );
+  }
+
+  @override
+  double get maxExtent => 72; // Appx height of bar + padding
+
+  @override
+  double get minExtent => 72;
+
+  @override
+  bool shouldRebuild(covariant _DateRangeHeaderDelegate oldDelegate) {
+    return oldDelegate.state != state;
   }
 }

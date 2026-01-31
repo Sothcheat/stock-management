@@ -148,7 +148,6 @@ class _AddNewOrderScreenState extends ConsumerState<AddNewOrderScreen> {
   }
 
   void _showEditQuantitySheet(OrderItem item) {
-    int qty = item.quantity;
     showModalBottomSheet(
       context: context,
       backgroundColor: SoftColors.surface,

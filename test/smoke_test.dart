@@ -1,6 +1,7 @@
+// ignore_for_file: avoid_print
+
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_management_app/features/inventory/data/inventory_repository.dart';
@@ -20,13 +21,13 @@ class FakeFirebaseStorage extends Fake implements FirebaseStorage {}
 void main() {
   group('FirebaseOrdersRepository Smoke Test', () {
     late FakeFirebaseFirestore firestore;
-    late MockFirebaseAuth auth;
     late FirebaseOrdersRepository ordersRepo;
     late InventoryRepository inventoryRepo;
 
     setUp(() {
       firestore = FakeFirebaseFirestore();
-      auth = MockFirebaseAuth(signedIn: true);
+      // auth was unused
+
       // Create mock Ref if needed, or null if we don't assume role checks for this test or mock them
       // For simplicity, we assume we can pass a dummy ref that returns a user with permission if needed.
       // But verify logic uses _ref.read(currentUserProfileProvider).
@@ -49,16 +50,7 @@ void main() {
         print('--- Starting Smoke Test ---');
 
         // 1. Setup Product
-        final productData = {
-          'toFirestore': () => {
-            'name': 'Test Product',
-            'price': 100,
-            'costPrice': 50,
-            'manualStock': 10,
-            'variants': [],
-            'createdAt': DateTime.now().toIso8601String(),
-          },
-        };
+        // productData was unused
 
         // Manually add to firestore
         final productRef = await firestore.collection('products').add({

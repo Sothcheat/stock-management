@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum OrderStatus {
+  reserved,
   prepping,
   delivering,
   completed,
-  cancelled;
+  cancelled,
+  voided;
 
   static OrderStatus fromString(String status) {
     return OrderStatus.values.firstWhere(
@@ -211,12 +213,17 @@ class OrderModel {
   final double totalAmount;
   final bool isArchived; // New Field
 
+  final bool isVoided;
+
   // Transient field for pagination cursor (not serialized to/from Firestore)
   final DocumentSnapshot? snapshot;
 
   // --- Financial Getters ---
 
   double get totalRevenue {
+    // Voided orders generate NO revenue for reports
+    if (isVoided) return 0.0;
+
     final itemsRevenue = items.fold(
       0.0,
       (total, item) => total + (item.priceAtSale * item.quantity),
@@ -225,6 +232,11 @@ class OrderModel {
   }
 
   double get totalExpense {
+    // Voided orders generate NO expense?
+    // Usually voided means transaction cancelled.
+    // IF we restore stock, COGS also reverts. So 0 expense.
+    if (isVoided) return 0.0;
+
     final itemsCost = items.fold(0.0, (total, item) {
       final itemCost =
           (item.costPriceAtSale + item.shipmentCostAtSale) * item.quantity;
@@ -250,10 +262,9 @@ class OrderModel {
     required this.createdAt,
     required this.updatedAt,
     this.isArchived = false,
+    this.isVoided = false,
     this.snapshot,
   });
-
-  // ... (Financial Getters Omitted, assume unchanged)
 
   factory OrderModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
@@ -273,6 +284,7 @@ class OrderModel {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       isArchived: data['isArchived'] ?? false,
+      isVoided: data['isVoided'] ?? false,
       snapshot: doc,
     );
   }
@@ -291,6 +303,7 @@ class OrderModel {
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
       'isArchived': isArchived,
+      'isVoided': isVoided,
     };
   }
 
@@ -306,6 +319,7 @@ class OrderModel {
     String? note,
     DateTime? updatedAt,
     bool? isArchived,
+    bool? isVoided,
   }) {
     return OrderModel(
       id: id ?? this.id,
@@ -321,6 +335,7 @@ class OrderModel {
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isArchived: isArchived ?? this.isArchived,
+      isVoided: isVoided ?? this.isVoided,
     );
   }
 }

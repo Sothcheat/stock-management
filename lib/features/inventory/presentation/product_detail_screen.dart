@@ -417,7 +417,6 @@ class ProductDetailScreen extends ConsumerWidget {
                   );
 
                   if (shouldDelete == true) {
-                    // TODO: Use abstract repository once delete is supported
                     await ref
                         .read(inventoryRepositoryProvider)
                         .deleteProduct(currentProduct.id);

@@ -12,6 +12,7 @@ import '../../../../design_system.dart';
 import '../../inventory/data/inventory_repository.dart';
 import '../../inventory/domain/product.dart';
 import '../../inventory/domain/category.dart';
+import '../../../../core/utils/logger.dart';
 import '../../inventory/data/providers/category_provider.dart';
 import 'add_variant_dialog.dart';
 
@@ -135,7 +136,7 @@ class _AddEditProductScreenState extends ConsumerState<AddEditProductScreen> {
             aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
           )
           .catchError((e) {
-            debugPrint("Cropper Error: $e");
+            Logger.error("Cropper Error: $e");
             return null;
           });
 

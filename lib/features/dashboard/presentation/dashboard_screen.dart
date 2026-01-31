@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../../../design_system.dart';
 import '../../auth/data/providers/auth_providers.dart';
 
@@ -15,11 +17,12 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final userProfileAsync = ref.watch(currentUserProfileProvider);
+    final colors = context.softColors; // Dynamic Theme Colors
 
     if (userProfileAsync.isLoading) {
-      return const Scaffold(
-        backgroundColor: SoftColors.background,
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        backgroundColor: colors.background,
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -31,7 +34,7 @@ class DashboardScreen extends ConsumerWidget {
           Text(
             "Good Morning,",
             style: GoogleFonts.outfit(
-              color: SoftColors.textSecondary,
+              color: colors.textSecondary,
               fontSize: 14,
             ),
           ),
@@ -47,9 +50,9 @@ class DashboardScreen extends ConsumerWidget {
                       name,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.outfit(
-                        color: SoftColors.textMain,
-                        fontSize: 24, // Optimized from 26
-                        fontWeight: FontWeight.w800, // Extra Bold
+                        color: colors.textMain,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
@@ -60,13 +63,13 @@ class DashboardScreen extends ConsumerWidget {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: SoftColors.brandPrimary.withValues(alpha: 0.1),
+                      color: colors.brandPrimary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       role,
                       style: GoogleFonts.outfit(
-                        color: SoftColors.brandPrimary,
+                        color: colors.brandPrimary,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.5,
@@ -87,23 +90,27 @@ class DashboardScreen extends ConsumerWidget {
       ),
       actions: [
         BounceButton(
-          onTap: () {}, // TODO: Notifications
+          onTap: () {
+            // Navigate to Orders as a simple Notification Center proxy
+            // In a real app, this would open a dedicated Notifications Screen
+            GoRouter.of(context).go('/orders');
+          },
           child: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: colors.surface, // Fixed: Dynamic Surface Color
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: SoftColors.textMain.withValues(alpha: 0.05),
+                  color: colors.textMain.withValues(alpha: 0.05),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
               ],
             ),
-            child: const Icon(
+            child: Icon(
               Icons.notifications_none_rounded,
-              color: SoftColors.textMain,
+              color: colors.textMain, // Fixed: Dynamic Text Color
             ),
           ),
         ),
@@ -114,9 +121,6 @@ class DashboardScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 1. Interactive Performance Card
-            // Only show for Owner/Admin
-            // 1. Interactive Performance Card
-            // Logic for data visibility is handled inside the widget
             const Padding(
               padding: EdgeInsets.only(bottom: 24),
               child: DashboardPerformanceCard(),

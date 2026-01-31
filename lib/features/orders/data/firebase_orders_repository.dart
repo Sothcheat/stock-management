@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../auth/data/providers/auth_providers.dart';
 import '../../auth/domain/user_model.dart';
 import '../../inventory/data/inventory_repository.dart';
@@ -9,30 +8,28 @@ import '../../inventory/domain/product.dart';
 import '../domain/order.dart';
 import '../domain/repositories/order_repository.dart';
 
-part 'firebase_orders_repository.g.dart';
-
-@Riverpod(keepAlive: true)
-OrderRepository ordersRepository(Ref ref) {
-  // Injecting InventoryRepository as requested
+// Manual Providers to enforce Interface usage
+final ordersRepositoryProvider = Provider<IOrderRepository>((ref) {
   final inventoryRepo = ref.watch(inventoryRepositoryProvider);
   return FirebaseOrdersRepository(
     FirebaseFirestore.instance,
     ref,
     inventoryRepo,
   );
-}
+});
 
-@riverpod
-Stream<List<OrderModel>> ordersStream(Ref ref) {
+final ordersStreamProvider = StreamProvider<List<OrderModel>>((ref) {
   return ref.watch(ordersRepositoryProvider).getOrdersStream();
-}
+});
 
-@riverpod
-Stream<OrderModel?> orderStream(Ref ref, String id) {
+final orderStreamProvider = StreamProvider.family<OrderModel?, String>((
+  ref,
+  id,
+) {
   return ref.watch(ordersRepositoryProvider).getOrderStream(id);
-}
+});
 
-class FirebaseOrdersRepository implements OrderRepository {
+class FirebaseOrdersRepository implements IOrderRepository {
   final FirebaseFirestore _firestore;
   final Ref _ref;
   // ignore: unused_field
@@ -68,16 +65,206 @@ class FirebaseOrdersRepository implements OrderRepository {
   }
 
   @override
+  Future<void> voidOrder(String orderId) async {
+    _ensureOwnerOrAdmin('void order');
+    await _firestore.runTransaction((transaction) async {
+      // 1. READ PHASE: Fetch ALL documents first
+      final orderRef = _firestore.collection('orders').doc(orderId);
+      final doc = await transaction.get(orderRef);
+      if (!doc.exists) throw Exception("Order not found");
+
+      final order = OrderModel.fromFirestore(doc);
+
+      // Constraint: Check if already voided
+      if (order.isVoided) {
+        throw Exception("Order is already voided");
+      }
+
+      // Read Products
+      final Map<String, DocumentSnapshot> productDocs = {};
+      for (final item in order.items) {
+        if (!productDocs.containsKey(item.productId)) {
+          productDocs[item.productId] = await transaction.get(
+            _firestore.collection('products').doc(item.productId),
+          );
+        }
+      }
+
+      // Read Aggregations (Daily & Monthly)
+      // Only if the order was COMPLETED and contributed to stats
+      DocumentSnapshot? dailyDoc;
+      DocumentSnapshot? monthlyDoc;
+      String? dateKey;
+      String? monthKey;
+
+      if (order.status == OrderStatus.completed) {
+        final timestamp = order.updatedAt;
+        final phnomPenhTime = timestamp.toUtc().add(const Duration(hours: 7));
+        dateKey = phnomPenhTime.toIso8601String().substring(0, 10);
+        monthKey = phnomPenhTime.toIso8601String().substring(0, 7);
+
+        dailyDoc = await transaction.get(
+          _firestore.collection('daily_summaries').doc(dateKey),
+        );
+        monthlyDoc = await transaction.get(
+          _firestore.collection('monthly_summaries').doc(monthKey),
+        );
+      }
+
+      // 2. LOGIC PHASE: Compute Updates
+      final Map<DocumentReference, Map<String, dynamic>> batchUpdates = {};
+
+      // A. Compute Stock Restorations
+      for (final entry in productDocs.entries) {
+        final productId = entry.key;
+        final productDoc = entry.value;
+
+        if (productDoc.exists) {
+          final product = Product.fromFirestore(productDoc);
+          List<ProductVariant> newVariants = List.from(product.variants);
+          int restoredManualStock = product.manualStock ?? 0;
+          int totalRestored = 0;
+
+          final items = order.items.where((i) => i.productId == productId);
+
+          for (final item in items) {
+            totalRestored += item.quantity;
+            if (item.variantId != null) {
+              final index = newVariants.indexWhere(
+                (v) => v.id == item.variantId,
+              );
+              if (index != -1) {
+                final old = newVariants[index];
+                newVariants[index] = ProductVariant(
+                  id: old.id,
+                  name: old.name,
+                  stockQuantity: old.stockQuantity + item.quantity,
+                );
+              }
+            } else {
+              restoredManualStock += item.quantity;
+            }
+          }
+
+          final updates = <String, dynamic>{
+            'totalStock': product.totalStock + totalRestored,
+            'lastUpdated': FieldValue.serverTimestamp(),
+          };
+
+          if (product.variants.isNotEmpty) {
+            updates['variants'] = newVariants.map((v) => v.toMap()).toList();
+          } else {
+            updates['manualStock'] = restoredManualStock;
+          }
+
+          batchUpdates[productDoc.reference] = updates;
+        }
+      }
+
+      // B. Compute Aggregation Reversals (if performed)
+      // Logic copied from _performAggregationUpdates but handling inline writes later
+      // We can use transaction.set with merge straight away in Write phase
+      // Helper to calculate ranking updates
+      Map<String, int> calculateRanking(
+        Map<String, dynamic> currentData,
+        int multiplier,
+      ) {
+        final currentRanking = Map<String, int>.from(
+          currentData['productRanking'] ?? {},
+        );
+        for (final item in order.items) {
+          final key = item.name;
+          final currentQty = currentRanking[key] ?? 0;
+          final newQty = currentQty + (item.quantity * multiplier);
+          if (newQty <= 0) {
+            currentRanking.remove(key);
+          } else {
+            currentRanking[key] = newQty;
+          }
+        }
+        return currentRanking;
+      }
+
+      // 3. WRITE PHASE: Execute all writes
+
+      // A. Write Product Updates
+      for (final entry in batchUpdates.entries) {
+        transaction.update(entry.key, entry.value);
+      }
+
+      // B. Write Aggregation Updates
+      if (order.status == OrderStatus.completed &&
+          dailyDoc != null &&
+          monthlyDoc != null &&
+          dateKey != null &&
+          monthKey != null) {
+        final multiplier = -1; // Reverse stats
+        final orderRevenue = order.totalRevenue;
+        final orderProfit = order.netProfit;
+        final orderItemsCount = order.items.fold<int>(
+          0,
+          (p, c) => p + c.quantity,
+        );
+
+        final dailyRanking = dailyDoc.exists
+            ? calculateRanking(
+                dailyDoc.data() as Map<String, dynamic>,
+                multiplier,
+              )
+            : calculateRanking({}, multiplier);
+        final monthlyRanking = monthlyDoc.exists
+            ? calculateRanking(
+                monthlyDoc.data() as Map<String, dynamic>,
+                multiplier,
+              )
+            : calculateRanking({}, multiplier);
+
+        transaction.set(
+          _firestore.collection('daily_summaries').doc(dateKey),
+          {
+            'totalRevenue': FieldValue.increment(orderRevenue * multiplier),
+            'totalProfit': FieldValue.increment(orderProfit * multiplier),
+            'itemsSold': FieldValue.increment(orderItemsCount * multiplier),
+            'productRanking': dailyRanking,
+            'date': dateKey,
+          },
+          SetOptions(merge: true),
+        );
+
+        transaction.set(
+          _firestore.collection('monthly_summaries').doc(monthKey),
+          {
+            'totalRevenue': FieldValue.increment(orderRevenue * multiplier),
+            'totalProfit': FieldValue.increment(orderProfit * multiplier),
+            'itemsSold': FieldValue.increment(orderItemsCount * multiplier),
+            'productRanking': monthlyRanking,
+            'month': monthKey,
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+      // C. Update Order Status
+      transaction.update(orderRef, {
+        'isVoided': true,
+        'status':
+            'voided', // Or keep original status? User requirement says 'voided' status update.
+        'updatedAt': Timestamp.now(),
+      });
+    });
+  }
+
+  @override
   Future<void> permanentPurgeOrder(String orderId) async {
     _ensureOwnerOrAdmin('purge orders');
-    // Just delete the doc. No legacy restoration.
+    // Hard delete. Stock ALREADY handled by voidOrder.
+    // Constraint: Purge should not touch stock.
     await _firestore.collection('orders').doc(orderId).delete();
   }
 
   @override
   Future<void> bulkArchive(List<String> ids, bool archive) async {
     _ensureOwnerOrAdmin('bulk archive');
-    // Firestore batch limit is 500. Assuming list is smaller for this UI.
     final batch = _firestore.batch();
     for (final id in ids) {
       final docRef = _firestore.collection('orders').doc(id);
@@ -85,17 +272,6 @@ class FirebaseOrdersRepository implements OrderRepository {
         'isArchived': archive,
         'updatedAt': Timestamp.now(),
       });
-    }
-    await batch.commit();
-  }
-
-  @override
-  Future<void> bulkPurge(List<String> ids) async {
-    _ensureOwnerOrAdmin('bulk purge');
-    final batch = _firestore.batch();
-    for (final id in ids) {
-      final docRef = _firestore.collection('orders').doc(id);
-      batch.delete(docRef);
     }
     await batch.commit();
   }
@@ -125,13 +301,46 @@ class FirebaseOrdersRepository implements OrderRepository {
   @override
   Future<List<OrderModel>> getOrdersHistory({
     int limit = 20,
-    DocumentSnapshot? startAfter,
+    Object? startAfter,
     DateTimeRange? dateRange,
     String? statusFilter,
     OrderType? typeFilter,
     bool isArchived = false,
+    bool filterVoided = false,
   }) async {
     Query query = _firestore.collection('orders');
+
+    // VOIDED FILTER OVERRIDE (Global Search)
+    if (filterVoided) {
+      query = query.where('isVoided', isEqualTo: true);
+
+      // Still respect Archive context if desired, or skip it?
+      // User said "show me all mistakes". Usually implies ignoring "Archive" state too?
+      // But typically "Archived Screen" vs "Active Screen" are separate.
+      // I will respect isArchived solely to keep screens distinct.
+      // If user wants ALL voided ever, they might need to go to Archive?
+      // Let's assume standard behavior: context-sensitive.
+      if (isArchived) {
+        query = query.where('isArchived', isEqualTo: true);
+      }
+
+      // We explicitly output sort by createdAt for consistency
+      query = query.orderBy('createdAt', descending: true);
+
+      // Pagination
+      if (startAfter != null && startAfter is DocumentSnapshot) {
+        query = query.startAfterDocument(startAfter);
+      }
+      query = query.limit(limit);
+
+      final snapshot = await query.get();
+      return snapshot.docs
+          .map((doc) => OrderModel.fromFirestore(doc))
+          .where((order) => order.isVoided) // Double check
+          .toList();
+    }
+
+    // --- STANDARD FILTER LOGIC (Non-Voided) ---
 
     // 1. Lifecycle Filter
     // HYBRID STRATEGY:
@@ -142,7 +351,6 @@ class FirebaseOrdersRepository implements OrderRepository {
       query = query.where('isArchived', isEqualTo: true);
     }
 
-    // 2. Type/Name Filter & Indexing Rules
     // 2. Type/Name Filter & Indexing Rules
     // Rule: If using != (isNotEqualTo), that field MUST be the first orderBy.
     if (typeFilter != null) {
@@ -193,16 +401,11 @@ class FirebaseOrdersRepository implements OrderRepository {
     }
 
     // Pagination
-    if (startAfter != null) {
+    if (startAfter != null && startAfter is DocumentSnapshot) {
       query = query.startAfterDocument(startAfter);
     }
 
     query = query.limit(limit);
-
-    // Constraint: We must exclude 'active' orders (prepping/delivering) from History.
-    // However, Legacy orders have NO status field. Firestore '.where' excludes missing fields.
-    // So we CANNOT use server-side filtering if we want to keep Legacy orders.
-    // Solution: Fetch page, then filter client-side.
 
     final snapshot = await query.get();
 
@@ -211,8 +414,6 @@ class FirebaseOrdersRepository implements OrderRepository {
       order,
     ) {
       // 0. ARCHIVE FILTER (Crucial for Hybrid Strategy)
-      // If we want Active (isArchived=false), exclude true.
-      // If we want Archived (isArchived=true), the server filter did it, but this double-checks.
       if (order.isArchived != isArchived) return false;
 
       // 1. If strict status filter is requested, obey it.
@@ -220,9 +421,13 @@ class FirebaseOrdersRepository implements OrderRepository {
         return order.status.name == statusFilter;
       }
 
-      // 2. Default History View: Show Completed, Cancelled, or specific legacy cases
-      // Since OrderModel.fromFirestore now defaults unknown/missing status to 'completed',
-      // checks for 'completed' will catch legacy orders too.
+      // 2. Default History View: Show Completed, Cancelled.
+      // Explicitly HIDE voided orders in standard view to avoid clutter?
+      // Or show them?
+      // If user wants to see them, they use the filter.
+      // So HIDE them here.
+      if (order.isVoided) return false;
+
       return order.status == OrderStatus.completed ||
           order.status == OrderStatus.cancelled;
     }).toList();
@@ -492,7 +697,7 @@ class FirebaseOrdersRepository implements OrderRepository {
     // Calculate total amount
     final totalAmount = items.fold(
       0.0,
-      (sum, item) => sum + (item.priceAtSale * item.quantity),
+      (sumTotal, item) => sumTotal + (item.priceAtSale * item.quantity),
     );
 
     final orderId = _firestore.collection('orders').doc().id; // Pre-generate ID
@@ -833,7 +1038,7 @@ class FirebaseOrdersRepository implements OrderRepository {
   }
 
   @override
-  Future<void> bulkDelete(List<String> ids) async {
+  Future<void> bulkPurge(List<String> ids) async {
     _ensureOwnerOrAdmin('delete orders');
     if (ids.isEmpty) return;
 
@@ -916,5 +1121,42 @@ class FirebaseOrdersRepository implements OrderRepository {
       // 2. Delete Order
       transaction.delete(_firestore.collection('orders').doc(order.id));
     });
+  }
+
+  @override
+  Stream<int> watchVoidedCount() {
+    return _firestore
+        .collection('orders')
+        .where('isVoided', isEqualTo: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
+  }
+
+  @override
+  Stream<List<OrderModel>> watchCompletedOrders(DateTime start, DateTime end) {
+    return _firestore
+        .collection('orders')
+        .where('status', isEqualTo: 'completed')
+        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('createdAt', isLessThanOrEqualTo: Timestamp.fromDate(end))
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => OrderModel.fromFirestore(doc))
+              .toList(),
+        );
+  }
+
+  @override
+  Stream<OrderModel> onReservedOrderAdded() {
+    final startTime = DateTime.now();
+    return _firestore
+        .collection('orders')
+        .where('status', isEqualTo: OrderStatus.reserved.name)
+        .snapshots()
+        .expand((snapshot) => snapshot.docChanges)
+        .where((change) => change.type == DocumentChangeType.added)
+        .map((change) => OrderModel.fromFirestore(change.doc))
+        .where((order) => order.updatedAt.isAfter(startTime));
   }
 }

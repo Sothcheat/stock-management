@@ -10,33 +10,37 @@ class ArchivedOrdersScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Watch the "Archived" family instance
-    final archivedState = ref.watch(orderHistoryProvider(isArchived: true));
+    final archivedAsync = ref.watch(orderHistoryProvider(true));
+    final archivedState = archivedAsync.value;
 
-    return SoftScaffold(
-      title: 'Archived Orders',
-      showBack: true,
-      body: Column(
-        children: [
-          // Filter Chips (Optional: Reusing similar filter logic if needed,
-          // but for Archive maybe just List is enough for MVP.
-          // User asked for "Archive Folder" icon, implying a simple list.
-          // Getting filters for free if we want them, but let's stick to simple list first.)
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () async {
-                await ref
-                    .read(orderHistoryProvider(isArchived: true).notifier)
-                    .refresh();
-              },
-              child: OrderListView(
-                state: archivedState,
-                isEmptyMessage: "No archived orders found",
-                isHistory: true, // Group by date
-                isArchived: true, // Enable Restore actions
+    return RefreshIndicator(
+      onRefresh: () async {
+        await ref.read(orderHistoryProvider(true).notifier).refresh();
+      },
+      child: SoftSliverScaffold(
+        title: 'Archived Orders',
+        showBack: true,
+        slivers: [
+          archivedAsync.when(
+            loading: () => const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.only(top: 100),
+                child: Center(child: CircularProgressIndicator()),
               ),
+            ),
+            error: (e, s) =>
+                SliverToBoxAdapter(child: Center(child: Text("Error: $e"))),
+            data: (state) => SliverOrderList(
+              state: state,
+              isEmptyMessage: "No archived orders found",
+              isHistory: true, // Group by date
+              isArchived: true, // Enable Restore actions
             ),
           ),
         ],
+        bottomSheet: (archivedState?.isSelectionMode ?? false)
+            ? const SelectionToolbar(isArchived: true)
+            : null,
       ),
     );
   }

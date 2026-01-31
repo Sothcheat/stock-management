@@ -5,8 +5,6 @@ import '../../inventory/domain/product.dart';
 import '../../products/data/providers/product_provider.dart';
 import '../../auth/domain/user_model.dart';
 import '../../auth/data/providers/auth_providers.dart';
-import '../../reports/data/reports_repository.dart';
-import '../../reports/domain/daily_summary.dart';
 import '../../../../core/utils/date_utils.dart';
 
 // 1. Dashboard View State (Today/Weekly)
@@ -46,78 +44,64 @@ class DashboardMetrics {
       DashboardMetrics(profit: 0, sales: 0, itemsSold: 0);
 }
 
+// Helper: Dashboard Orders Stream (Today vs Weekly)
+final dashboardOrdersStreamProvider = StreamProvider<List<OrderModel>>((ref) {
+  final repo = ref.watch(ordersRepositoryProvider);
+  final viewType = ref.watch(dashboardViewTypeProvider);
+  final now = DateTime.now();
+
+  if (viewType == DashboardViewType.today) {
+    final start = DateTime(now.year, now.month, now.day); // 00:00:00
+    final end = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+    return repo.watchCompletedOrders(start, end);
+  } else {
+    // Weekly
+    final start = DateUtilsHelper.getStartOfWeek(now);
+    final end = DateUtilsHelper.getEndOfWeek(
+      now,
+    ).add(const Duration(hours: 23, minutes: 59, seconds: 59));
+    return repo.watchCompletedOrders(start, end);
+  }
+});
+
+// Helper: Weekly Orders Stream (Always Weekly for Highlights)
+final weeklyOrdersStreamProvider = StreamProvider<List<OrderModel>>((ref) {
+  final repo = ref.watch(ordersRepositoryProvider);
+  final now = DateTime.now();
+  final start = DateUtilsHelper.getStartOfWeek(now);
+  final end = DateUtilsHelper.getEndOfWeek(
+    now,
+  ).add(const Duration(hours: 23, minutes: 59, seconds: 59));
+  return repo.watchCompletedOrders(start, end);
+});
+
 final dashboardMetricsProvider = Provider<DashboardMetrics>((ref) {
-  // We need the stream value. To use 'watch' on a stream inside a Provider, we assume we wrap this in a StreamProvider or we use the AsyncValue if we change the return type.
-  // The original was a Provider returning DashboardMetrics (sync).
-  // But now data is async (Summary Stream).
-  // I will change dashboardMetricsProvider to return AsyncValue<DashboardMetrics>
-  // OR keep simple and just use `ref.watch(reportsStreamProvider)`.
-  // Let's create a stream provider for summaries first?
-  // Actually, I can just use `ref.watch(summariesStreamProvider)` if I create one.
-  // Let's just define the stream inside.
-
-  // WAIT: The UI expects `DashboardMetrics` directly, accessing `.profit`.
-  // If I change to AsyncValue, I break the UI `metrics.profit`.
-  // I must check `DashboardPerformanceCard`. It does `final metrics = ref.watch(dashboardMetricsProvider);`.
-  // And uses `metrics.profit`. It assumes sync.
-  // So `dashboardMetricsProvider` MUST BE `AsyncValue` enabled?
-  // The previous implementation used `ordersStreamProvider` which IS AsyncValue<List<Order>>?
-  // No, `ordersStreamProvider` is `Stream<List>`.
-  // The previous `dashboardMetricsProvider` did `final ordersAsync = ref.watch(ordersStreamProvider);`
-  // And returned `ordersAsync.when(...)`.
-  // Wait, `ordersAsync.when` returns `DashboardMetrics`?
-  // Yes. The provider return type was `Provider<DashboardMetrics>`.
-  // So it handles the AsyncValue internally and returns `DashboardMetrics.empty()` on loading.
-  // Good style. I will stick to that.
-
-  final summariesAsync = ref.watch(dailySummariesStreamProvider);
-  final viewType = ref.watch(dashboardViewTypeProvider); // Today vs Weekly
+  final ordersAsync = ref.watch(dashboardOrdersStreamProvider);
   final userRole = ref.watch(currentUserProfileProvider).value?.role;
   final isEmployee = userRole == UserRole.employee;
 
-  return summariesAsync.when(
-    data: (summaries) {
-      final now = DateTime.now();
-      final todayKey = now.toIso8601String().substring(0, 10); // YYYY-MM-DD
-
+  return ordersAsync.when(
+    data: (orders) {
       double profit = 0;
       double sales = 0;
       int items = 0;
 
-      if (viewType == DashboardViewType.today) {
-        // Find today's summary
-        final todaySummary = summaries.firstWhere(
-          (s) => s.date == todayKey,
-          orElse: () => DailySummary(date: todayKey), // Empty
-        );
-        profit = todaySummary.totalProfit;
-        sales = todaySummary.totalRevenue;
-        items = todaySummary.itemsSold;
-      } else {
-        // Weekly: Sum standard week (Sun-Sat)
-        final startOfWeek = DateUtilsHelper.getStartOfWeek(now);
-        final endOfWeek = DateUtilsHelper.getEndOfWeek(now);
+      for (final order in orders) {
+        // CRITICAL FIX: Exclude voided orders from sums
+        if (order.isVoided) continue;
 
-        for (var s in summaries) {
-          final date = DateTime.parse(s.date);
-          // Check if date is within start/end (inclusive)
-          // Start: Sunday 00:00
-          // End: Saturday 00:00
-          // We want to include Saturday data (which might have time or just date string "YYYY-MM-DD" parsed to 00:00)
-          // If parsed from YYYY-MM-DD, it is 00:00.
-          // range: >= start && <= end
-          if ((date.isAtSameMomentAs(startOfWeek) ||
-                  date.isAfter(startOfWeek)) &&
-              (date.isAtSameMomentAs(endOfWeek) ||
-                  date.isBefore(endOfWeek.add(const Duration(days: 1))))) {
-            profit += s.totalProfit;
-            sales += s.totalRevenue;
-            items += s.itemsSold;
-          }
+        sales += order.totalRevenue;
+        profit += order.netProfit;
+        for (final item in order.items) {
+          items += item.quantity;
         }
       }
 
-      // Security: Hide profit for employees
+      // Safeguard: Clamp to zero to never show negative
+      sales = sales < 0 ? 0 : sales;
+      profit = profit < 0 ? 0 : profit;
+      items = items < 0 ? 0 : items;
+
       if (isEmployee) {
         profit = 0;
       }
@@ -127,11 +111,6 @@ final dashboardMetricsProvider = Provider<DashboardMetrics>((ref) {
     loading: () => DashboardMetrics.empty(),
     error: (e, s) => DashboardMetrics.empty(),
   );
-});
-
-// Helper Stream Provider
-final dailySummariesStreamProvider = StreamProvider<List<DailySummary>>((ref) {
-  return ref.watch(reportsRepositoryProvider).watchSummaries(limit: 7);
 });
 
 // 3. Stock Alerts (Priority Sorted) -> UPDATED
@@ -208,22 +187,34 @@ class ProductSalesStat {
 }
 
 final weeklyHighlightsProvider = Provider<List<ProductSalesStat>>((ref) {
-  final summariesAsync = ref.watch(dailySummariesStreamProvider);
+  final ordersAsync = ref.watch(weeklyOrdersStreamProvider);
   final productsAsync = ref.watch(productsProvider);
 
-  if (summariesAsync.isLoading || productsAsync.isLoading) {
+  if (ordersAsync.isLoading || productsAsync.isLoading) {
     return [];
   }
 
-  final summaries = summariesAsync.valueOrNull ?? [];
+  final orders = ordersAsync.valueOrNull ?? [];
   final products = productsAsync.valueOrNull ?? [];
 
   final Map<String, int> consolidatedRanking = {};
 
-  for (var s in summaries) {
-    s.productRanking.forEach((key, qty) {
-      consolidatedRanking[key] = (consolidatedRanking[key] ?? 0) + qty;
-    });
+  for (final order in orders) {
+    // CRITICAL FIX: Exclude voided orders from ranking
+    if (order.isVoided) continue;
+
+    for (final item in order.items) {
+      if (item.productId.isNotEmpty) {
+        // We aggregate by NAME as per previous logic, but ProductID is safer if available
+        // Previous logic used `productRanking` map which had names.
+        // Orders have `items` with `name` and `productId`.
+        // Let's use name to match previous behavior or productId?
+        // Let's use Name for consistency with ProductSalesStat constructor which takes Name.
+        final key = item.name;
+        consolidatedRanking[key] =
+            (consolidatedRanking[key] ?? 0) + item.quantity;
+      }
+    }
   }
 
   final list = consolidatedRanking.entries.map((e) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/data/auth_repository.dart'; // Changed from auth_controller
@@ -18,6 +19,7 @@ import '../../features/orders/presentation/archived_orders_screen.dart';
 import '../../features/orders/domain/order.dart';
 import '../../features/reports/presentation/report_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
+import '../../../design_system.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateChangesProvider);
@@ -83,19 +85,36 @@ final routerProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'add',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) => const AddEditProductScreen(),
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: const AddEditProductScreen(),
+                      transitionDuration: slideTransitionDuration,
+                      reverseTransitionDuration: slideTransitionDuration,
+                      transitionsBuilder: slideLeftTransitionsBuilder,
+                    ),
                   ),
                   GoRoute(
                     path: 'edit',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) =>
-                        AddEditProductScreen(product: state.extra as Product?),
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: AddEditProductScreen(
+                        product: state.extra as Product?,
+                      ),
+                      transitionDuration: slideTransitionDuration,
+                      reverseTransitionDuration: slideTransitionDuration,
+                      transitionsBuilder: slideLeftTransitionsBuilder,
+                    ),
                   ),
                   GoRoute(
                     path: 'detail',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) =>
-                        ProductDetailScreen(product: state.extra as Product),
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: ProductDetailScreen(
+                        product: state.extra as Product,
+                      ),
+                      transitionDuration: scaleUpTransitionDuration,
+                      reverseTransitionDuration: scaleUpTransitionDuration,
+                      transitionsBuilder: scaleUpTransitionsBuilder,
+                    ),
                   ),
                 ],
               ),
@@ -111,25 +130,67 @@ final routerProvider = Provider<GoRouter>((ref) {
                   GoRoute(
                     path: 'new-order',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) => const AddNewOrderScreen(),
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: const AddNewOrderScreen(),
+                      opaque: false,
+                      barrierDismissible: true,
+                      barrierColor: Colors.black54,
+                      transitionDuration: const Duration(milliseconds: 350),
+                      reverseTransitionDuration: const Duration(
+                        milliseconds: 250,
+                      ),
+                      transitionsBuilder:
+                          (context, animation, secondaryAnimation, child) {
+                            final curvedAnimation = CurvedAnimation(
+                              parent: animation,
+                              curve: Curves.easeOutBack, // Bounce at top
+                              reverseCurve: Curves.easeInCubic,
+                            );
+
+                            // Slide up from bottom like a modal sheet
+                            return SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, 1), // Start from bottom
+                                end: Offset.zero,
+                              ).animate(curvedAnimation),
+                              child: child,
+                            );
+                          },
+                    ),
                   ),
                   GoRoute(
                     path: 'product-selection',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) => ProductSelectionScreen(
-                      existingItems: state.extra as List<OrderItem>?,
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: ProductSelectionScreen(
+                        existingItems: state.extra as List<OrderItem>?,
+                      ),
+                      transitionDuration: slideTransitionDuration,
+                      reverseTransitionDuration: slideTransitionDuration,
+                      transitionsBuilder: slideLeftTransitionsBuilder,
                     ),
                   ),
                   GoRoute(
-                    path: 'detail',
+                    path: 'detail/:orderId',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) =>
-                        OrderDetailScreen(order: state.extra as OrderModel),
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: OrderDetailScreen(
+                        orderId: state.pathParameters['orderId']!,
+                      ),
+                      transitionDuration: scaleUpTransitionDuration,
+                      reverseTransitionDuration: scaleUpTransitionDuration,
+                      transitionsBuilder: scaleUpTransitionsBuilder,
+                    ),
                   ),
                   GoRoute(
                     path: 'archived',
                     parentNavigatorKey: _rootNavigatorKey,
-                    builder: (context, state) => const ArchivedOrdersScreen(),
+                    pageBuilder: (context, state) => CustomTransitionPage(
+                      child: const ArchivedOrdersScreen(),
+                      transitionDuration: slideTransitionDuration,
+                      reverseTransitionDuration: slideTransitionDuration,
+                      transitionsBuilder: slideLeftTransitionsBuilder,
+                    ),
                   ),
                 ],
               ),
@@ -231,6 +292,7 @@ class ScaffoldWithNavBar extends ConsumerWidget {
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
         onDestinationSelected: (index) {
+          HapticFeedback.selectionClick();
           final branchIndex = destinations[index].branchIndex;
           navigationShell.goBranch(
             branchIndex,

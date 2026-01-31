@@ -104,10 +104,7 @@ class StockAlertSection extends ConsumerWidget {
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: BounceButton(
-              onTap: () => context.push(
-                '/inventory/detail',
-                extra: product,
-              ), // TODO: Navigate to specific variant?
+              onTap: () => context.push('/inventory/detail', extra: product),
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(

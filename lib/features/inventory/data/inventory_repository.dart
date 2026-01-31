@@ -139,6 +139,8 @@ class InventoryRepository implements CategoryRepository {
     return updatedVariants;
   }
 
+  /// Adds a new product to Firestore and uploads its images (main + variants).
+  /// [imageFile] is optional; if provided, it's compressed and uploaded.
   Future<void> addProduct(Product product, File? imageFile) async {
     // 1. Generate ID first to use for Image Naming
     final docRef = _productsRef.doc();
@@ -176,6 +178,9 @@ class InventoryRepository implements CategoryRepository {
     await docRef.set(newProduct.toFirestore());
   }
 
+  /// Updates an existing product.
+  /// If [newImageFile] is provided, it replaces the existing main image.
+  /// Variant images are handled via [product.variants] logic (local path vs URL).
   Future<void> updateProduct(Product product, File? newImageFile) async {
     String? imageUrl = product.imagePath;
 
@@ -206,6 +211,8 @@ class InventoryRepository implements CategoryRepository {
         );
   }
 
+  /// Deletes a product by ID.
+  /// Attempts to clean up the main image in storage, but ignores errors if file missing.
   Future<void> deleteProduct(String productId) async {
     await _productsRef.doc(productId).delete();
     // Optional: Delete image from storage if it exists to clean up
@@ -226,12 +233,15 @@ class InventoryRepository implements CategoryRepository {
     });
   }
 
+  /// Adds a new category to the global catalog.
+  /// Returns the category ID.
   @override
   Future<String> addCategory(Category category) async {
     await _categoriesRef.doc(category.id).set(category.toMap());
     return category.id;
   }
 
+  /// Deletes a category by ID.
   @override
   Future<void> deleteCategory(String id) async {
     await _categoriesRef.doc(id).delete();

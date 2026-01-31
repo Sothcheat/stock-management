@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../domain/daily_summary.dart';
 import '../domain/monthly_summary.dart';
+import '../../orders/domain/order.dart';
 
 part 'reports_repository.g.dart';
 
@@ -112,4 +113,37 @@ class ReportsRepository {
           return summaries;
         });
   }
+
+  // Centralized Calculation Logic
+  ReportSummary calculateSummary(List<OrderModel> orders) {
+    double revenue = 0;
+    double profit = 0;
+    final Map<String, int> ranking = {};
+
+    for (final order in orders) {
+      if (order.isVoided) continue;
+
+      revenue += order.totalRevenue;
+      profit += order.netProfit;
+
+      for (final item in order.items) {
+        final key = item.name;
+        ranking[key] = (ranking[key] ?? 0) + item.quantity;
+      }
+    }
+
+    // Safeguard calls - Ensures no negative values in UI
+    if (revenue < 0) revenue = 0;
+    if (profit < 0) profit = 0;
+
+    return ReportSummary(revenue, profit, ranking);
+  }
+}
+
+class ReportSummary {
+  final double totalRevenue;
+  final double totalProfit;
+  final Map<String, int> productRanking;
+
+  ReportSummary(this.totalRevenue, this.totalProfit, this.productRanking);
 }
